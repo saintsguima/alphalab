@@ -1,35 +1,44 @@
 <?php
-declare (strict_types = 1);
-
+/**
+ * ProcessaCarga.php (v3)
+ * - Aceita registros SEM CnpjCpf desde que exista Cliente (Nome)
+ * - Ignora a ÚLTIMA linha do CSV (não processa)
+ * - Compatível com PHP 7.0+ (sem arrow function e sem typed properties)
+ */
 class ProcessaCarga
 {
-    private PDO $pdo;
-    private string $apiUrl;
+    /** @var PDO */
+    private $pdo;
 
-    public function __construct(PDO $pdo, string $apiUrl)
+    public function __construct(PDO $pdo)
     {
-        $this->pdo    = $pdo;
-        $this->apiUrl = $apiUrl;
+        $this->pdo = $pdo;
     }
 
     /**
-     * Lê um CSV (separador ';'), tenta localizar o cliente por CPF/CNPJ (11/14 dígitos) ou por Nome.
-     * Se encontrar, chama a API externa. Caso contrário, registra na dlCargaCliente.
+     * Processa o CSV de carga.
+     * @param string $csvPath Caminho do arquivo CSV
+     * @return array { ok:int, fail:int, errors:array }
      */
-    public function processCarga(string $csvPath): array
+    public function processCarga($csvPath)
     {
-        $ok       = 0;
-        $fail     = 0;
-        $errors   = [];
-        $linhaNum = 0; // Usado para referenciar a linha original no arquivo
+        $ok     = 0;
+        $fail   = 0;
+        $errors = [];
 
-        $csv = new SplFileObject($csvPath, 'r');
-        // Mantido o READ_CSV para ler como array, removido o SKIP_EMPTY
-        // para tratar linhas vazias manualmente (mais seguro)
-        $csv->setFlags(SplFileObject::READ_CSV | SplFileObject::READ_AHEAD);
-        $csv->setCsvControl(';');
+        if (! is_file($csvPath)) {
+            return [
+                'ok'     => 0,
+                'fail'   => 1,
+                'errors' => ["Arquivo não encontrado: {$csvPath}"],
+            ];
+        }
 
-        // 1. Defina o cabeçalho esperado (com trim aplicado para corresponder)
+        $file = new SplFileObject($csvPath);
+        $file->setFlags(SplFileObject::READ_CSV);
+        $file->setCsvControl(';');
+
+        // Cabeçalho esperado (com trim aplicado para corresponder)
         $cabecalhoEsperado = [
             'Titulo',
             'Cliente',
@@ -40,246 +49,285 @@ class ProcessaCarga
             '',
         ];
 
-        // 2. Flag para controlar o início do processamento de dados
         $cabecalhoEncontrado = false;
+        $linhaNum            = 0;
 
-        foreach ($csv as $row) {
+        // Buffer para ignorar a última linha:
+        // - Lemos a linha atual e só processamos a anterior.
+        $prevRow     = null;
+        $prevLineNum = null;
+
+        foreach ($file as $row) {
             $linhaNum++;
 
-            // Pula linhas vazias (array com apenas nulls ou vazio após trim)
-            $linhaSemVazios = array_filter($row, fn($cell) => $cell !== null && trim((string) $cell) !== '');
-            if (empty($linhaSemVazios)) {
-                //var_dump("L$linhaNum: Linha vazia/lixo ignorada.");
+            if (! is_array($row)) {
                 continue;
             }
 
-            // 3. Lógica para encontrar o cabeçalho
+            // Algumas leituras retornam [null] no final; trate como vazio
+            if (count($row) === 1 && ($row[0] === null || trim((string) $row[0]) === '')) {
+                continue;
+            }
+
+            // Limpa para comparar cabeçalho
+            $linhaAtualLimpa = [];
+            foreach ($row as $v) {
+                $linhaAtualLimpa[] = trim((string) ($v === null ? '' : $v));
+            }
+
+            // Ainda buscando cabeçalho
             if (! $cabecalhoEncontrado) {
-                // Mapeia a linha atual limpando os espaços em branco de cada célula para a comparação
-                $linhaAtualLimpa = array_map('trim', $row);
-                // Compara a linha atual (limpa) com o cabeçalho esperado
                 if ($linhaAtualLimpa === $cabecalhoEsperado) {
-                    //var_dump("L$linhaNum: CABEÇALHO ENCONTRADO. Próximas linhas são dados.");
                     $cabecalhoEncontrado = true;
-                    continue; // Pula a linha do cabeçalho
+                    // reset de buffer quando achou cabeçalho
+                    $prevRow     = null;
+                    $prevLineNum = null;
                 }
-
-                // Se não for o cabeçalho e a flag estiver como false, é uma linha lixo, ignorar.
-                //var_dump("L$linhaNum: Linha lixo ignorada: " . implode(';', $row));
                 continue;
             }
 
-            // =========================================================================================
-            // 4. Se a flag for TRUE, esta é uma linha de DADOS para processar
-            // =========================================================================================
-
-            // Garante que o array tem pelo menos o tamanho esperado (ou a lógica abaixo falharia)
-            // if (count($row) < 6) {
-            //     $fail++;
-            //     $errors[] = "L$linhaNum: Linha de dados incompleta/mal formada.";
-            //     continue;
-            // }
-
-                                                           // Extração dos dados
-            $clienteRaw  = trim((string) ($row[1] ?? '')); // Coluna Cliente (índice 1)
-            $docRaw      = trim((string) ($row[2] ?? '')); // Coluna CnpjCpf (índice 2)
-            $emailRaw    = trim((string) ($row[3] ?? '')); // Coluna E_mailFinanceiro (índice 3)
-            $telefoneRaw = trim((string) ($row[4] ?? '')); // Coluna Celular (índice 4)
-            $valRaw      = trim((string) ($row[5] ?? '')); // Coluna TotalExame (índice 5)
-
-            $clienteRaw = mb_convert_encoding($clienteRaw, 'UTF-8', 'ISO-8859-1');
-
-            // O código original tinha:
-            // $cabecalho = $csv->fgetcsv();
-            // Esse comando DEVE SER REMOVIDO! Ele avança o ponteiro do arquivo
-            // de forma indesejada dentro do loop `foreach`.
-
-            $valor = $this->parseMoney($valRaw);
-            if ($valor === null) {
-                $fail++;
-                $errors[] = "L$linhaNum: valor ('$valRaw') inválido.";
-                continue;
-            }
-
-            if ($docRaw === '' && $emailRaw === '' && $telefoneRaw === '') {
-                // A linha pode ser de lixo/totalizador no fim do arquivo.
-                // Por exemplo: ";159,00;;;;22.465,90;" - pode ser ignorado ou tratado.
-                if (strtoupper($clienteRaw) === '' && $valor > 0) {
-                    // var_dump("L$linhaNum: Ignorando totalizador ou linha incompleta/sem identificador.");
-                    continue;
+            // A partir daqui, são linhas de dados
+            // Estratégia de ignorar última linha:
+            // - Se já existe uma linha anterior no buffer, processa ela agora.
+            // - A linha atual vira a "prev" e fica no buffer.
+            if ($prevRow !== null) {
+                $result = $this->processDataRow($prevRow, $prevLineNum);
+                if ($result['status'] === 'ok') {
+                    $ok++;
+                } elseif ($result['status'] === 'skip') {
+                    // não conta nada
+                } else {
+                    $fail++;
+                    $errors[] = $result['error'];
                 }
-
-                $fail++;
-                $errors[] = "L$linhaNum: linha em branco (sem CPF/CNPJ, Email ou Telefone).";
-                continue;
             }
 
-            $digits = $this->onlyDigits($docRaw);
-            $isDoc  = $this->isCpfCnpj($docRaw); // 11 ou 14 dígitos após limpar
-
-            try {
-                // Busca cliente conforme tipo
-                $clienteId = $isDoc
-                    ? $this->findUserIdByCpfCnpj($digits)
-                    : $this->findUserIdByName(onlyABC(strtoupper($clienteRaw)));
-
-                // O seu código original tem um bug aqui: a variável local é $clienteId, mas
-                // você usa $clientId na linha seguinte. Corrigido para $clienteId.
-
-                if (! $clienteId) {
-                    $this->insertCliente($clienteRaw, $digits, $emailRaw, $telefoneRaw);
-                    // $ok++; // Se a inserção for considerada sucesso
-                    continue;
-                }
-                $this->updateCliente($clienteId, $clienteRaw, $digits, $emailRaw, $telefoneRaw);
-                $ok++;
-            } catch (Throwable $t) {
-                $fail++;
-                $errors[] = "L$linhaNum: exceção - " . $t->getMessage();
-            }
+            $prevRow     = $row;
+            $prevLineNum = $linhaNum;
         }
+
+        // IMPORTANTE: não processamos $prevRow aqui -> isso IGNORA a última linha
 
         if (! $cabecalhoEncontrado) {
             $errors[] = "ERRO FATAL: Cabeçalho ('" . implode(';', $cabecalhoEsperado) . "') não foi encontrado no arquivo.";
-            $fail     = -1; // Sinalizar erro grave na leitura
+            $fail     = -1;
         }
 
         return ['ok' => $ok, 'fail' => $fail, 'errors' => $errors];
     }
 
-    /* ========================= AUXILIARES ========================= */
-
     /**
-     * Retorna apenas dígitos de uma string.
+     * Processa uma linha de dados já após o cabeçalho.
+     * Retorna:
+     * - ['status'=>'ok'] quando gravou/atualizou com sucesso
+     * - ['status'=>'skip'] quando ignorou linha (totalizador/lixo)
+     * - ['status'=>'fail','error'=>msg] quando deu erro
      */
-    private function onlyDigits(string $s): string
+    private function processDataRow(array $row, $linhaNum)
     {
-        return preg_replace('/\D+/', '', $s) ?? '';
-    }
+                                                                       // Extração das colunas
+        $clienteRaw  = trim((string) (isset($row[1]) ? $row[1] : '')); // Cliente
+        $docRaw      = trim((string) (isset($row[2]) ? $row[2] : '')); // CnpjCpf
+        $emailRaw    = trim((string) (isset($row[3]) ? $row[3] : '')); // E_mailFinanceiro
+        $telefoneRaw = trim((string) (isset($row[4]) ? $row[4] : '')); // Celular
+        $valRaw      = trim((string) (isset($row[5]) ? $row[5] : '')); // TotalExame
 
-    /**
-     * Aceita formatos "1.234,56" (pt-BR) e "1234.56" (padrão).
-     * Retorna float ou null se inválido.
-     */
-    private function parseMoney(string $raw): ?float
-    {
-        $raw = trim($raw);
-
-        // Formato pt-BR: 1.234,56
-        if (preg_match('/^\d{1,3}(\.\d{3})*,\d{2}$/', $raw)) {
-            $norm = str_replace('.', '', $raw);
-            $norm = str_replace(',', '.', $norm);
-            return is_numeric($norm) ? (float) $norm : null;
+        // Tenta converter encoding do nome (evita warning se não precisar)
+        if ($clienteRaw !== '') {
+            $converted = @mb_convert_encoding($clienteRaw, 'UTF-8', 'ISO-8859-1');
+            if ($converted !== false && $converted !== '') {
+                $clienteRaw = $converted;
+            }
         }
 
-        // Formato 1234.56 ou inteiro
-        $norm = str_replace(',', '.', $raw);
-        return is_numeric($norm) ? (float) $norm : null;
+        $clienteNorm = $this->removerCaracteresEspeciais(strtoupper($clienteRaw));
+
+        $valor = $this->parseMoney($valRaw);
+        if ($valor === null) {
+            return [
+                'status' => 'fail',
+                'error'  => "L{$linhaNum}: valor inválido em TotalExame: '{$valRaw}'",
+            ];
+        }
+
+        // Regra: precisa ter Cliente (Nome).
+        // Se não tiver, e parecer um totalizador/lixo, ignora sem erro.
+        if ($clienteNorm === '') {
+            if ($docRaw === '' && $emailRaw === '' && $telefoneRaw === '' && $valor > 0) {
+                return ['status' => 'skip'];
+            }
+
+            return [
+                'status' => 'fail',
+                'error'  => "L{$linhaNum}: registro ignorado - coluna Cliente (Nome) vazia.",
+            ];
+        }
+
+        // Agora permite CPF/CNPJ vazio, desde que tenha Nome (Cliente)
+        $digits      = $this->onlyDigits($docRaw);
+        $cpfDigits   = ($digits !== '') ? $digits : null;
+        $isDocValido = $this->isCpfCnpj($docRaw);
+
+        try {
+            // Busca cliente:
+            // - Se doc válido: busca por CPF/CNPJ
+            // - Senão: busca por Nome (normalizado)
+            if ($isDocValido) {
+                $clienteId = $this->findUserIdByCpfCnpj($digits);
+            } else {
+                $clienteId = $this->findUserIdByName($clienteNorm);
+            }
+
+            if (! $clienteId) {
+                $this->insertCliente($clienteRaw, $cpfDigits, $emailRaw, $telefoneRaw);
+                return ['status' => 'ok'];
+            }
+
+            $this->updateCliente((int) $clienteId, $clienteRaw, $cpfDigits, $emailRaw, $telefoneRaw);
+            return ['status' => 'ok'];
+        } catch (Throwable $t) {
+            return [
+                'status' => 'fail',
+                'error'  => "L{$linhaNum}: exceção - " . $t->getMessage(),
+            ];
+        } catch (Exception $e) {
+            // Compatibilidade (caso Throwable não exista/pegue)
+            return [
+                'status' => 'fail',
+                'error'  => "L{$linhaNum}: exceção - " . $e->getMessage(),
+            ];
+        }
     }
 
-    /**
-     * Decide se a entrada representa CPF (11 dígitos) ou CNPJ (14 dígitos), ignorando máscara.
-     */
-    private function isCpfCnpj(string $raw): bool
+    /* ========================= AUXILIARES ========================= */
+
+    private function onlyDigits($s)
     {
-        $d   = $this->onlyDigits($raw);
-        $len = strlen($d);
-        return $len === 11 || $len === 14;
+        if ($s === null) {
+            return '';
+        }
+
+        $out = preg_replace('/\D+/', '', (string) $s);
+        return $out === null ? '' : $out;
     }
 
-    /**
-     * Procura cliente por CPF ou CNPJ (colunas CPF e/ou CNPJ).
-     * Ajuste os nomes das colunas conforme seu schema.
-     */
-    private function findUserIdByCpfCnpj(string $digits): ?int
+    private function parseMoney($raw)
     {
-        // Se sua tabela tiver apenas CPF, use "WHERE CPF = :doc".
-        // Mantido OR para cobrir ambos os casos.
-        $sql = "SELECT Id FROM cliente
-                WHERE CPF = :doc
-                LIMIT 1";
+        $raw = trim((string) $raw);
+        if ($raw === '') {
+            return null;
+        }
 
+        // pt-BR
+        if (strpos($raw, ',') !== false) {
+            $raw = str_replace('.', '', $raw);
+            $raw = str_replace(',', '.', $raw);
+        }
+
+        if (! is_numeric($raw)) {
+            return null;
+        }
+
+        return (float) $raw;
+    }
+
+    private function isCpfCnpj($docRaw)
+    {
+        $digits = $this->onlyDigits($docRaw);
+        $len    = strlen($digits);
+        return ($len === 11 || $len === 14);
+    }
+
+    private function findUserIdByCpfCnpj($digits)
+    {
+        $sql  = "SELECT Id FROM cliente WHERE CPF = :doc LIMIT 1";
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([':doc' => $digits]);
         $id = $stmt->fetchColumn();
         return $id ? (int) $id : null;
     }
 
-    /**
-     * Procura cliente por Nome (match exato; adapte para LIKE se desejar).
-     */
-    private function findUserIdByName(string $name): ?int
+    private function findUserIdByName($name)
     {
-        $sql = "SELECT Id FROM cliente
-                WHERE Nome = :name
-                LIMIT 1";
-
+        $sql  = "SELECT Id FROM cliente WHERE Nome = :name LIMIT 1";
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([':name' => $name]);
         $id = $stmt->fetchColumn();
         return $id ? (int) $id : null;
     }
 
-    private function updateCliente(int $clienteId, string $clienteRaw, string $digits, string $emailRaw, string $telefoneRaw): void
+    private function updateCliente($clienteId, $clienteRaw, $cpfDigits, $emailRaw, $telefoneRaw)
     {
-
-        $sql = "UPDATE
-                    cliente
-                SET
-                    Nome = :Nome,
+        $sql = "UPDATE cliente
+                SET Nome = :Nome,
                     CPF = :CPF,
                     Telefone = :Telefone,
                     Email = :Email
-                WHERE
-                    Id = :Id;";
+                WHERE Id = :Id;";
 
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([
             ':Nome'     => $this->removerCaracteresEspeciais(strtoupper($clienteRaw)),
-            ':CPF'      => $this->onlyDigits($digits),
+            ':CPF'      => ($cpfDigits === null ? null : $this->onlyDigits($cpfDigits)),
             ':Telefone' => $this->onlyDigits($telefoneRaw),
-            ':Email'    => explode(';', $emailRaw)[0],
-            ':Id'       => $clienteId,
+            ':Email'    => $this->firstEmail($emailRaw),
+            ':Id'       => (int) $clienteId,
         ]);
-
     }
 
-    private function insertCliente(string $clienteRaw, string $digits, string $emailRaw, string $telefoneRaw): void
+    private function insertCliente($clienteRaw, $cpfDigits, $emailRaw, $telefoneRaw)
     {
-
-        $sql = "INSERT INTO cliente(
-                    Nome,
-                    CPF,
-                    Telefone,
-                    Email,
-                    Ativo
-               ) VALUES (
-                    :Nome,
-                    :CPF,
-                    :Telefone,
-                    :Email,
-                    :Ativo
-               )";
+        $sql = "INSERT INTO cliente (Nome, CPF, Telefone, Email, Ativo)
+                VALUES (:Nome, :CPF, :Telefone, :Email, 1);";
 
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([
             ':Nome'     => $this->removerCaracteresEspeciais(strtoupper($clienteRaw)),
-            ':CPF'      => $this->onlyDigits($digits), // aqui vai o documento sem máscara OU o nome, conforme seu layout atual
+            ':CPF'      => ($cpfDigits === null ? null : $this->onlyDigits($cpfDigits)),
             ':Telefone' => $this->onlyDigits($telefoneRaw),
-            ':Email'    => explode(';', $emailRaw)[0],
-            ':Ativo'    => 1,
+            ':Email'    => $this->firstEmail($emailRaw),
         ]);
     }
 
-    private function removerCaracteresEspeciais(string $texto): string
+    private function firstEmail($emailRaw)
     {
-        // Normaliza caracteres acentuados para ASCII
-        $texto = iconv('UTF-8', 'ASCII//TRANSLIT', $texto);
+        $emailRaw = (string) $emailRaw;
+        $parts    = explode(';', $emailRaw);
+        return trim($parts[0]);
+    }
 
-        // Remove caracteres não alfanuméricos (mantém letras, números e espaço)
-        $texto = preg_replace('/[^a-zA-Z0-9\s]/', '', $texto);
+    private function removerCaracteresEspeciais($texto)
+    {
+        if ($texto === null || $texto === '') {
+            return '';
+        }
 
-        // Remove espaços extras e trim final
+        // Garante UTF-8
+        $texto = mb_convert_encoding($texto, 'UTF-8', 'UTF-8');
+
+        // Converte para MAIÚSCULO antes
+        $texto = mb_strtoupper($texto, 'UTF-8');
+
+        // Remove acentos manualmente (mais confiável que iconv)
+        $map = [
+            'Á' => 'A', 'À' => 'A', 'Â' => 'A', 'Ã' => 'A',
+            'É' => 'E', 'È' => 'E', 'Ê' => 'E',
+            'Í' => 'I', 'Ì' => 'I', 'Î' => 'I',
+            'Ó' => 'O', 'Ò' => 'O', 'Ô' => 'O', 'Õ' => 'O',
+            'Ú' => 'U', 'Ù' => 'U', 'Û' => 'U',
+            'Ç' => 'C',
+        ];
+
+        $texto = strtr($texto, $map);
+
+        // Remove caracteres indesejados
+        // MANTÉM letras, números, espaço e hífen
+        $texto = preg_replace('/[^A-Z0-9\s\-\%]/u', '', $texto);
+
+        // Normaliza múltiplos espaços
+        $texto = preg_replace('/\s+/', ' ', $texto);
+
         return trim($texto);
     }
+
 }

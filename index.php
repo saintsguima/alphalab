@@ -4,18 +4,18 @@
     ini_set("display_errors", 1);
     $mensagem = "";
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        session_start();
+    session_start();
 
-        require_once 'Globals/globals.php';
-        require_once __DIR__ . '/DbConnection/ALPHAConnection.php';
-        $pdo = db_pdo();
+    require_once 'Globals/globals.php';
+    require_once __DIR__ . '/DbConnection/ALPHAConnection.php';
+    $pdo = db_pdo();
 
-        $username = $_POST['inputEmailAddress'] ?? '';
-        $password = $_POST['inputChoosePassword'] ?? '';
+    $username = $_POST['inputEmailAddress'] ?? '';
+    $password = $_POST['inputChoosePassword'] ?? '';
 
-        $senhaCriptografada = hash('sha256', $password);
+    $senhaCriptografada = hash('sha256', $password);
 
-        $sql = "select
+    $sql = "select
 		u.Id,
 		u.Nome,
 		u.UserName,
@@ -26,56 +26,56 @@
 		usuario u
 	WHERE
 		u.email = :username AND u.pwd = :password AND ativo = 1";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([':username' => $username, ':password' => $senhaCriptografada]);
+
+    if ($stmt->rowCount() === 1) {
+        $resultado            = $stmt->fetch(PDO::FETCH_ASSOC);
+        $_SESSION["NOME"]     = $resultado['Nome'];
+        $_SESSION["USERNAME"] = $resultado['UserName'];
+        $_SESSION["EMAIL"]    = $resultado['Email'];
+        $_SESSION["USERID"]   = $resultado['Id'];
+        $_SESSION["TELEFONE"] = $resultado['Telefone'];
+        $_SESSION["PERFIL"]   = $resultado['PerfilId'];
+
+        $sql  = "SELECT Permissao, flAtivo FROM PerfilPermissao WHERE PerfilId = :PerfilId";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute([':username' => $username, ':password' => $senhaCriptografada]);
+        $stmt->execute([':PerfilId' => $_SESSION["PERFIL"]]);
 
-        if ($stmt->rowCount() === 1) {
-            $resultado            = $stmt->fetch(PDO::FETCH_ASSOC);
-            $_SESSION["NOME"]     = $resultado['Nome'];
-            $_SESSION["USERNAME"] = $resultado['UserName'];
-            $_SESSION["EMAIL"]    = $resultado['Email'];
-            $_SESSION["USERID"]   = $resultado['Id'];
-            $_SESSION["TELEFONE"] = $resultado['Telefone'];
-            $_SESSION["PERFIL"]   = $resultado['PerfilId'];
+        // Array temporário para armazenar as permissões
+        $permissoesDoPerfil = [];
 
-            $sql  = "SELECT Permissao, flAtivo FROM PerfilPermissao WHERE PerfilId = :PerfilId";
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute([':PerfilId' => $_SESSION["PERFIL"]]);
+        // Loop para montar o array associativo
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $permissao = $row['Permissao'];
+            $flAtivo   = $row['flAtivo'];
 
-            // Array temporário para armazenar as permissões
-            $permissoesDoPerfil = [];
-
-            // Loop para montar o array associativo
-            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-                $permissao = $row['Permissao'];
-                $flAtivo   = $row['flAtivo'];
-
-                // Armazena a permissão como CHAVE e o flAtivo como VALOR
-                // Ex: ['0201' => 1, '0202' => 0]
-                $permissoesDoPerfil[$permissao] = $flAtivo;
-            }
-
-            // Armazena o array na variável de sessão
-            $_SESSION['perfil_permissoes'] = $permissoesDoPerfil;
-
-            // echo "Permissões carregadas na sessão para o Perfil $perfilId:<br>";
-            // print_r($_SESSION['perfil_permissoes']);
-            // die;
-            header("Location: " . $GLOBALS['HOST'] . $GLOBALS['APP_HOST'] . "dashboard.php");
-            die;
-
-        } else {
-            $mensagem = 'Swal.fire({icon: "error", title: "Oops...", text: "Usuário e/ou senha não cadastrados!"});';
+            // Armazena a permissão como CHAVE e o flAtivo como VALOR
+            // Ex: ['0201' => 1, '0202' => 0]
+            $permissoesDoPerfil[$permissao] = $flAtivo;
         }
 
+        // Armazena o array na variável de sessão
+        $_SESSION['perfil_permissoes'] = $permissoesDoPerfil;
+
+        // echo "Permissões carregadas na sessão para o Perfil $perfilId:<br>";
+        // print_r($_SESSION['perfil_permissoes']);
+        // die;
+        header("Location: " . $GLOBALS['HOST'] . $GLOBALS['APP_HOST'] . "dashboard.php");
+        die;
+
     } else {
-        session_start();
+        $mensagem = 'Swal.fire({icon: "error", title: "Oops...", text: "Usuário e/ou senha não cadastrados!"});';
+    }
 
-        // Remove todas as variáveis da sessão
-        $_SESSION = [];
+    } else {
+    session_start();
 
-        // Destroi a sessão completamente
-        session_destroy();
+    // Remove todas as variáveis da sessão
+    $_SESSION = [];
+
+    // Destroi a sessão completamente
+    session_destroy();
 
     }
 ?>

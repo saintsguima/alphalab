@@ -1,27 +1,44 @@
 <?php
-declare (strict_types = 1);
 
 class ProcessaCR
 {
-    private PDO $pdo;
-    private string $dtInicio;
-    private string $dtFinal;
-    private string $apiUrl;
+    /** @var PDO */
+    private $pdo;
 
-    public function __construct(PDO $pdo, string $dtInicio, string $dtFinal, string $apiUrl)
+    /** @var string */
+    private $dtInicio;
+
+    /** @var string */
+    private $dtFinal;
+
+    /** @var string */
+    private $apiUrl;
+
+    /** @var array */
+    private $termosExcecao = [];
+
+    /** @var array */
+    private $termosPlano = [];
+
+    public function __construct(PDO $pdo, $dtInicio, $dtFinal, $apiUrl)
     {
         $this->pdo      = $pdo;
-        $this->dtInicio = $dtInicio;
-        $this->dtFinal  = $dtFinal;
-        $this->apiUrl   = $apiUrl; // mantido por compatibilidade (mesmo que hoje o método faça UPSERT no banco)
+        $this->dtInicio = (string) $dtInicio;
+        $this->dtFinal  = (string) $dtFinal;
+        $this->apiUrl   = (string) $apiUrl;
+
+        // Ajuda a evitar HY093 em alguns ambientes antigos
+        try {
+            $this->pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, true);
+        } catch (Exception $e) {
+            // ignora se não suportar
+        }
+
+        $this->termosExcecao = $this->loadTermsFromTable('Excecao');
+        $this->termosPlano   = $this->loadTermsFromTable('Plano');
     }
 
-    /**
-     * Processa o CSV e grava ContasReceber (via UPSERT), registrando erros em dlCargaCliente.
-     *
-     * @return array{ok:int, fail:int, errors:array<int,string>}
-     */
-    public function process(string $csvPath, string $arquivoBase, string $origName): array
+    public function process($csvPath, $arquivoBase, $origName)
     {
         $ok       = 0;
         $fail     = 0;
@@ -32,7 +49,6 @@ class ProcessaCR
         $csv->setFlags(SplFileObject::READ_CSV | SplFileObject::SKIP_EMPTY);
         $csv->setCsvControl(';');
 
-        // Seu layout tem ; no final, então existe uma coluna vazia no fim do cabeçalho
         $cabecalhoEsperado = [
             'Titulo',
             'Cliente',
@@ -45,121 +61,46 @@ class ProcessaCR
 
         $cabecalhoEncontrado = false;
 
+        // Buffer para ignorar a última linha (somatório)
+        $prevRow      = null;
+        $prevLinhaNum = 0;
+
         foreach ($csv as $row) {
             $linhaNum++;
 
-            // Em alguns casos o SplFileObject pode retornar false/null
             if (! is_array($row) || $row === [null] || $row === false) {
                 continue;
             }
 
-            // Normaliza: remove nulls e garante array de strings
-            $row = array_map(
-                static fn($v) => is_string($v) ? $v : (string) ($v ?? ''),
-                $row
-            );
+            // Normaliza para strings
+            $row2 = [];
+            foreach ($row as $v) {
+                $row2[] = is_string($v) ? $v : (string) ($v === null ? '' : $v);
+            }
+            $row = $row2;
 
-            // 1) Encontrar o cabeçalho (ignora "lixo" antes)
             if (! $cabecalhoEncontrado) {
-                $linhaAtualLimpa = array_map('trim', $row);
+                $linhaAtualLimpa = [];
+                foreach ($row as $c) {
+                    $linhaAtualLimpa[] = trim((string) $c);
+                }
 
                 if ($linhaAtualLimpa === $cabecalhoEsperado) {
                     $cabecalhoEncontrado = true;
                 }
-
-                // Seja cabeçalho ou lixo, não processa como dado
                 continue;
             }
 
-                                                           // 2) Linha de dado (após cabeçalho)
-            $clienteRaw  = trim((string) ($row[1] ?? '')); // Cliente
-            $docRaw      = trim((string) ($row[2] ?? '')); // CnpjCpf
-            $emailRaw    = trim((string) ($row[3] ?? '')); // E_mailFinanceiro (não usado no upsert, mas pode ser útil para debug)
-            $telefoneRaw = trim((string) ($row[4] ?? '')); // Celular (não usado no upsert)
-            $valRaw      = trim((string) ($row[5] ?? '')); // TotalExame
-
-            /**
-             * ✅ CORREÇÃO PRINCIPAL:
-             * $digits e $isDoc DEVEM ser calculados ANTES de QUALQUER continue/registro de erro.
-             * Assim eles nunca "herdam" valor da linha anterior.
-             */
-            $digits = $this->onlyDigits($docRaw);
-            $isDoc  = $this->isCpfCnpj($docRaw);
-
-            // Identificador para logging/erros (prioriza documento válido; senão usa nome)
-            $identificadorErro = ($isDoc && $digits !== '') ? $digits : $clienteRaw;
-
-            // 3) Validações coerentes com sua regra: achar por CPF/CNPJ OU por Nome
-            if ($valRaw === '' || ($digits === '' && $clienteRaw === '')) {
-                $fail++;
-                $msg      = 'linha incompleta.';
-                $errors[] = "{$linhaNum}: {$msg}";
-                $this->insertDLCR($origName, $msg, $linhaNum, $identificadorErro, 0.0, $this->dtInicio, $this->dtFinal);
-                continue;
+            // processa sempre a linha anterior; a última fica sem processar
+            if ($prevRow !== null) {
+                $this->processDataRow($prevRow, $prevLinhaNum, $origName, $ok, $fail, $errors);
             }
 
-            $valor = $this->parseMoney($valRaw);
-            if ($valor === null) {
-                $fail++;
-                $msg      = 'valor inválido.';
-                $errors[] = "{$linhaNum}: {$msg}";
-                $this->insertDLCR($origName, $msg, $linhaNum, $identificadorErro, 0.0, $this->dtInicio, $this->dtFinal);
-                continue;
-            }
-
-            if ($valor <= 0.0) {
-                $fail++;
-                $msg      = 'valor menor ou igual a zero.';
-                $errors[] = "{$linhaNum}: {$msg}";
-                $this->insertDLCR($origName, $msg, $linhaNum, $identificadorErro, (float) $valor, $this->dtInicio, $this->dtFinal);
-                continue;
-            }
-
-            // 4) Encontrar cliente
-            $clienteId = null;
-
-            if ($isDoc && $digits !== '') {
-                $clienteId = $this->findUserIdByCpfCnpj($digits);
-            } else {
-                // Normaliza o nome para bater com o que está gravado no seu banco
-                $nomeNormalizado = strtoupper($this->removerCaracteresEspeciais($clienteRaw));
-                $clienteId       = $this->findUserIdByName($nomeNormalizado);
-            }
-
-            if ($clienteId === null) {
-                $fail++;
-                $msg      = 'Cliente não encontrado.';
-                $errors[] = "{$linhaNum}: {$msg}";
-                $this->insertDLCR($origName, $msg, $linhaNum, $identificadorErro, (float) $valor, $this->dtInicio, $this->dtFinal);
-                continue;
-            }
-
-            // 5) Gravar (UPSERT) em ContasReceber
-            try {
-                $resp = $this->callExternalApi(
-                    identificador: $identificadorErro, // mantido
-                    valor: (float) $valor,
-                    dtInicio: $this->dtInicio,
-                    dtFinal: $this->dtFinal,
-                    clienteId: $clienteId,
-                    isDocumento: ($isDoc && $digits !== '')
-                );
-
-                if (($resp['ok'] ?? false) === true) {
-                    $ok++;
-                } else {
-                    $fail++;
-                    $status   = (int) ($resp['status'] ?? 500);
-                    $err      = (string) ($resp['error'] ?? 'erro');
-                    $errors[] = "{$linhaNum}: API status {$status} - {$err}";
-                    $this->insertDLCR($origName, "falha ao gravar: {$err}", $linhaNum, $identificadorErro, (float) $valor, $this->dtInicio, $this->dtFinal);
-                }
-            } catch (Throwable $t) {
-                $fail++;
-                $errors[] = "{$linhaNum}: exceção - " . $t->getMessage();
-                $this->insertDLCR($origName, "exceção: " . $t->getMessage(), $linhaNum, $identificadorErro, (float) $valor, $this->dtInicio, $this->dtFinal);
-            }
+            $prevRow      = $row;
+            $prevLinhaNum = $linhaNum;
         }
+
+        // NÃO processa $prevRow (última linha = somatório)
 
         return [
             'ok'     => $ok,
@@ -168,64 +109,91 @@ class ProcessaCR
         ];
     }
 
-    /**
-     * Registra linha não processada na dlCargaCliente.
-     */
-    private function insertDLCR(
-        string $origName,
-        string $historico,
-        int $linhaNum,
-        string $rawField,
-        float $valor,
-        string $dtInicio,
-        string $dtFinal
-    ): void {
-        $sql = "INSERT INTO dlCargaCliente(
-                    NomeArquivo,
-                    Historico,
-                    Linha,
-                    CPFCNPJ,
-                    Valor,
-                    DtInicio,
-                    DtFinal
-               ) VALUES (
-                    :NomeArquivo,
-                    :Historico,
-                    :Linha,
-                    :CPFCNPJ,
-                    :Valor,
-                    :DtInicio,
-                    :DtFinal
-               )";
+    private function processDataRow(array $row, $linhaNum, $origName, &$ok, &$fail, array &$errors)
+    {
+        $clienteRaw = trim(isset($row[1]) ? (string) $row[1] : '');
+        $docRaw     = trim(isset($row[2]) ? (string) $row[2] : '');
+        $totalRaw   = trim(isset($row[5]) ? (string) $row[5] : '');
 
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([
-            ':NomeArquivo' => $origName,
-            ':Historico'   => $historico,
-            ':Linha'       => $linhaNum,
-            ':CPFCNPJ'     => $rawField,
-            ':Valor'       => $valor,
-            ':DtInicio'    => $dtInicio,
-            ':DtFinal'     => $dtFinal,
-        ]);
+        // (3) Cliente vazio -> descarta sem log
+        if ($clienteRaw === '') {
+            return;
+        }
+
+        // proteção extra
+        if ($this->looksLikeSummaryRow($row)) {
+            return;
+        }
+
+        // (4.2) Descartar se Cliente contém termo de Plano ou Excecao
+        $clienteNorm = $this->normalizeForMatch($clienteRaw);
+
+        if ($this->containsAnyTerm($clienteNorm, $this->termosPlano) ||
+            $this->containsAnyTerm($clienteNorm, $this->termosExcecao)) {
+            return;
+        }
+
+        $valor = $this->parseMoney($totalRaw);
+        if ($valor === null) {
+            $fail++;
+            $msg      = 'Valor inválido em TotalExame.';
+            $errors[] = $linhaNum . ': ' . $msg . ' (TotalExame="' . $totalRaw . '")';
+            $this->insertDLCR($origName, $msg, (int) $linhaNum, $clienteRaw, 0.0, $this->dtInicio, $this->dtFinal);
+            return;
+        }
+
+        $identificadorErro = ($docRaw !== '') ? $docRaw : $clienteRaw;
+
+        // Busca cliente por CPF/CNPJ e fallback por Nome
+        $clienteId = null;
+
+        $digits = $this->onlyDigits($docRaw);
+        $isDoc  = ($digits !== '' && $this->isCpfCnpjDigits($digits));
+
+        if ($isDoc) {
+            $clienteId = $this->findUserIdByCpfCnpj($digits);
+        }
+
+        if ($clienteId === null) {
+            $clienteId = $this->findUserIdByName($clienteNorm);
+            // var_dump($clienteRaw);
+            // echo '<br/>';
+            // var_dump($clienteNorm);
+            // echo '<br/>';
+            // var_dump('Fallback por nome: ' . $clienteNorm . ' -> ' . ($clienteId === null ? 'NÃO ENCONTRADO' : 'ID ' . $clienteId));
+            // echo '<br/>';
+        }
+
+        if ($clienteId === null) {
+            $fail++;
+            $msg      = 'Cliente não encontrado.';
+            $errors[] = $linhaNum . ': ' . $msg . ' (Identificador="' . $identificadorErro . '")';
+            $this->insertDLCR($origName, $msg, (int) $linhaNum, $identificadorErro, (float) $valor, $this->dtInicio, $this->dtFinal);
+            return;
+        }
+
+        // (4.1) UPSERT por período
+        try {
+            $resp = $this->upsertContasReceber((float) $valor, $this->dtInicio, $this->dtFinal, (int) $clienteId);
+
+            if (isset($resp['ok']) && $resp['ok'] === true) {
+                $ok++;
+            } else {
+                $fail++;
+                $err      = isset($resp['error']) ? (string) $resp['error'] : 'erro';
+                $errors[] = $linhaNum . ': falha ao gravar: ' . $err;
+                $this->insertDLCR($origName, 'falha ao gravar: ' . $err, (int) $linhaNum, $identificadorErro, (float) $valor, $this->dtInicio, $this->dtFinal);
+            }
+        } catch (Exception $e) {
+            $fail++;
+            $errors[] = $linhaNum . ': exceção - ' . $e->getMessage();
+            $this->insertDLCR($origName, 'exceção: ' . $e->getMessage(), (int) $linhaNum, $identificadorErro, (float) $valor, $this->dtInicio, $this->dtFinal);
+        }
     }
 
-    /**
-     * Mantive o nome "callExternalApi" para não quebrar nada,
-     * mas hoje ele faz UPSERT na tabela ContasReceber (UPDATE se existe, INSERT se não).
-     *
-     * @return array{ok:bool,status:int,error:?string,data:mixed}
-     */
-    private function callExternalApi(
-        string $identificador,
-        float $valor,
-        string $dtInicio,
-        string $dtFinal,
-        int $clienteId,
-        bool $isDocumento
-    ): array {
+    private function upsertContasReceber($valor, $dtInicio, $dtFinal, $clienteId)
+    {
         try {
-            // 1) tenta atualizar
             $sqlUpdate = "
                 UPDATE ContasReceber
                 SET
@@ -238,15 +206,15 @@ class ProcessaCR
             ";
 
             $stmt = $this->pdo->prepare($sqlUpdate);
+            // ✅ sem ":" nas chaves
             $stmt->execute([
-                ':VlTotal'           => $valor,
-                ':IdUsuarioInclusao' => 1,
-                ':IdCliente'         => $clienteId,
-                ':DtInicio'          => $dtInicio,
-                ':DtFinal'           => $dtFinal,
+                'VlTotal'           => (float) $valor,
+                'IdUsuarioInclusao' => 1,
+                'IdCliente'         => (int) $clienteId,
+                'DtInicio'          => (string) $dtInicio,
+                'DtFinal'           => (string) $dtFinal,
             ]);
 
-            // 2) se não atualizou, insere
             if ($stmt->rowCount() === 0) {
                 $sqlInsert = "
                     INSERT INTO ContasReceber (
@@ -265,156 +233,266 @@ class ProcessaCR
                 ";
 
                 $stmtIns = $this->pdo->prepare($sqlInsert);
+                // ✅ sem ":" nas chaves
                 $stmtIns->execute([
-                    ':IdCliente'         => $clienteId,
-                    ':DtInicio'          => $dtInicio,
-                    ':DtFinal'           => $dtFinal,
-                    ':VlTotal'           => $valor,
-                    ':IdUsuarioInclusao' => 1,
+                    'IdCliente'         => (int) $clienteId,
+                    'DtInicio'          => (string) $dtInicio,
+                    'DtFinal'           => (string) $dtFinal,
+                    'VlTotal'           => (float) $valor,
+                    'IdUsuarioInclusao' => 1,
                 ]);
             }
 
-            return [
-                'ok'     => true,
-                'status' => 200,
-                'error'  => null,
-                'data'   => [
-                    'clienteId' => $clienteId,
-                    'dtInicio'  => $dtInicio,
-                    'dtFinal'   => $dtFinal,
-                    'valor'     => $valor,
-                ],
-            ];
-        } catch (Throwable $t) {
-            return [
-                'ok'     => false,
-                'status' => 500,
-                'error'  => $t->getMessage(),
-                'data'   => null,
-            ];
+            return ['ok' => true, 'error' => null];
+        } catch (Exception $e) {
+            return ['ok' => false, 'error' => $e->getMessage()];
         }
     }
 
-    /**
-     * Retorna apenas dígitos de uma string.
-     */
-    private function onlyDigits(string $s): string
+    private function insertDLCR($origName, $historico, $linhaNum, $rawField, $valor, $dtInicio, $dtFinal)
     {
-        return preg_replace('/\D+/', '', $s) ?? '';
+        $sql = "INSERT INTO dlCargaCliente(
+                    NomeArquivo,
+                    Historico,
+                    Linha,
+                    CPFCNPJ,
+                    Valor,
+                    DtInicio,
+                    DtFinal
+                ) VALUES (
+                    :NomeArquivo,
+                    :Historico,
+                    :Linha,
+                    :CPFCNPJ,
+                    :Valor,
+                    :DtInicio,
+                    :DtFinal
+                )";
+
+        $stmt = $this->pdo->prepare($sql);
+
+        // ✅ sem ":" nas chaves
+        $stmt->execute([
+            'NomeArquivo' => (string) $origName,
+            'Historico'   => (string) $historico,
+            'Linha'       => (int) $linhaNum,
+            'CPFCNPJ'     => (string) $rawField,
+            'Valor'       => (float) $valor,
+            'DtInicio'    => (string) $dtInicio,
+            'DtFinal'     => (string) $dtFinal,
+        ]);
     }
 
-    /**
-     * Aceita formatos "1.234,56" (pt-BR) e "1234.56" (padrão).
-     * Retorna float ou null se inválido.
-     */
-    private function parseMoney(string $raw): ?float
+    private function loadTermsFromTable($tableName)
     {
-        $raw = trim($raw);
+        try {
+            $sql  = "SELECT Nome FROM " . $tableName;
+            $stmt = $this->pdo->query($sql);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        // Formato pt-BR: 1.234,56
+            $out = [];
+            foreach ($rows as $r) {
+                $nome = trim(isset($r['Nome']) ? (string) $r['Nome'] : '');
+                if ($nome === '') {
+                    continue;
+                }
+
+                $out[] = $this->normalizeForMatch($nome);
+            }
+
+            // remove duplicados
+            $uniq = [];
+            foreach ($out as $v) {
+                if ($v !== '' && ! in_array($v, $uniq, true)) {
+                    $uniq[] = $v;
+                }
+            }
+
+            return array_values($uniq);
+        } catch (Exception $e) {
+            return [];
+        }
+    }
+
+    private function containsAnyTerm($haystackNorm, array $terms)
+    {
+        if ($haystackNorm === '' || empty($terms)) {
+            return false;
+        }
+
+        foreach ($terms as $term) {
+            if ($term === '') {
+                continue;
+            }
+
+            if (strpos($haystackNorm, $term) !== false) {
+                return true;
+            }
+
+        }
+        return false;
+    }
+
+    private function looksLikeSummaryRow(array $row)
+    {
+        $cliente = trim(isset($row[1]) ? (string) $row[1] : '');
+        $doc     = trim(isset($row[2]) ? (string) $row[2] : '');
+        $valor   = trim(isset($row[5]) ? (string) $row[5] : '');
+
+        if ($cliente !== '' && $doc === '' && ctype_digit($cliente)) {
+            return (bool) preg_match('/[\d\.]+,\d{2}|\d+\.\d{2}/', $valor);
+        }
+        return false;
+    }
+
+    private function parseMoney($raw)
+    {
+        $raw = trim((string) $raw);
+        if ($raw === '') {
+            return null;
+        }
+
         if (preg_match('/^\d{1,3}(\.\d{3})*,\d{2}$/', $raw)) {
             $norm = str_replace('.', '', $raw);
             $norm = str_replace(',', '.', $norm);
             return is_numeric($norm) ? (float) $norm : null;
         }
 
-        // Formato 1234.56 ou inteiro ou "1234,56"
-        $norm = str_replace(',', '.', $raw);
-        return is_numeric($norm) ? (float) $norm : null;
-    }
-
-    /**
-     * Decide se a entrada representa CPF (11 dígitos) ou CNPJ (14 dígitos), ignorando máscara.
-     */
-    private function isCpfCnpj(string $raw): bool
-    {
-        $d   = $this->onlyDigits($raw);
-        $len = strlen($d);
-        return $len === 11 || $len === 14;
-    }
-
-    /**
-     * Procura cliente por CPF/CNPJ.
-     * Ajuste o SQL caso seu schema seja diferente.
-     */
-    private function findUserIdByCpfCnpj(string $digits): ?int
-    {
-        $sql = "SELECT Id FROM cliente
-                WHERE CPF = :doc
-                LIMIT 1";
-
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([':doc' => $digits]);
-        $id = $stmt->fetchColumn();
-
-        return $id ? (int) $id : null;
-    }
-
-    /**
-     * Procura cliente por Nome (match exato).
-     * Se quiser tolerância, troque por LIKE e normalize de forma consistente.
-     */
-    private function findUserIdByName(string $name): ?int
-    {
-        $sql = "SELECT Id FROM cliente
-                WHERE Nome = :name
-                LIMIT 1";
-
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([':name' => $name]);
-        $id = $stmt->fetchColumn();
-
-        return $id ? (int) $id : null;
-    }
-
-    private function removerCaracteresEspeciais($texto): string
-    {
-        // Garante string (evita bool/null/array)
-        if (! is_string($texto)) {
-            $texto = (string) ($texto ?? '');
+        if (preg_match('/^\d+(,\d{2})$/', $raw)) {
+            $norm = str_replace(',', '.', $raw);
+            return is_numeric($norm) ? (float) $norm : null;
         }
 
-        $texto = trim($texto);
+        if (preg_match('/^\d+(\.\d{2})$/', $raw)) {
+            return is_numeric($raw) ? (float) $raw : null;
+        }
+
+        if (ctype_digit($raw)) {
+            return (float) $raw;
+        }
+
+        return null;
+    }
+
+    private function onlyDigits($raw)
+    {
+        $d = preg_replace('/\D+/', '', (string) $raw);
+        return is_string($d) ? $d : '';
+    }
+
+    private function isCpfCnpjDigits($digits)
+    {
+        $len = strlen((string) $digits);
+        return ($len === 11 || $len === 14);
+    }
+
+    private function findUserIdByCpfCnpj($digits)
+    {
+        $digits = (string) $digits;
+
+        $candidatesSql = [
+            "SELECT Id FROM cliente WHERE CPF = :doc LIMIT 1",
+            "SELECT Id FROM cliente WHERE CNPJ = :doc LIMIT 1",
+            "SELECT Id FROM cliente WHERE CnpjCpf = :doc LIMIT 1",
+            "SELECT Id FROM cliente WHERE REPLACE(REPLACE(REPLACE(CnpjCpf,'.',''),'-',''),'/','') = :doc LIMIT 1",
+            "SELECT Id FROM cliente WHERE REPLACE(REPLACE(REPLACE(CNPJ,'.',''),'-',''),'/','') = :doc LIMIT 1",
+            "SELECT Id FROM cliente WHERE REPLACE(REPLACE(CPF,'.',''),'-','') = :doc LIMIT 1",
+        ];
+
+        foreach ($candidatesSql as $sql) {
+            try {
+                $stmt = $this->pdo->prepare($sql);
+                // ✅ sem ":" nas chaves
+                $stmt->execute(['doc' => $digits]);
+                $id = $stmt->fetchColumn();
+                if ($id !== false && $id !== null) {
+                    return (int) $id;
+                }
+
+            } catch (Exception $e) {
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+    private function findUserIdByName($nomeNormalizado)
+    {
+        $nomeNormalizado = (string) $nomeNormalizado;
+        if ($nomeNormalizado === '') {
+            return null;
+        }
+
+        $candidates = [
+            ['sql' => "SELECT Id FROM cliente WHERE UPPER(Nome) = :nome LIMIT 1", 'param' => $nomeNormalizado],
+            ['sql' => "SELECT Id FROM cliente WHERE UPPER(RazaoSocial) = :nome LIMIT 1", 'param' => $nomeNormalizado],
+            ['sql' => "SELECT Id FROM cliente WHERE UPPER(Nome) LIKE :nome LIMIT 1", 'param' => '%' . $nomeNormalizado . '%'],
+            ['sql' => "SELECT Id FROM cliente WHERE UPPER(RazaoSocial) LIKE :nome LIMIT 1", 'param' => '%' . $nomeNormalizado . '%'],
+        ];
+
+        foreach ($candidates as $c) {
+            try {
+                $stmt = $this->pdo->prepare($c['sql']);
+                // ✅ sem ":" nas chaves
+                $stmt->execute(['nome' => $c['param']]);
+                $id = $stmt->fetchColumn();
+                if ($id !== false && $id !== null) {
+                    return (int) $id;
+                }
+
+            } catch (Exception $e) {
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizeForMatch($texto)
+    {
+
+        if ($texto === null) {
+            return '';
+        }
+
+        $texto = trim((string) $texto);
         if ($texto === '') {
             return '';
         }
 
-        // Tenta normalizar encoding para UTF-8 (se mbstring estiver disponível)
+        // 1) Detecta encoding provável do CSV e converte pra UTF-8
         if (function_exists('mb_detect_encoding') && function_exists('mb_convert_encoding')) {
-            $enc = mb_detect_encoding($texto, ['UTF-8', 'ISO-8859-1', 'Windows-1252'], true);
-            if ($enc && $enc !== 'UTF-8') {
-                $texto = mb_convert_encoding($texto, 'UTF-8', $enc);
+            $enc = mb_detect_encoding($texto, ['UTF-8', 'Windows-1252', 'ISO-8859-1'], true);
+            if ($enc === false) {
+                // fallback: Excel costuma ser Windows-1252
+                $enc = 'Windows-1252';
             }
+            $texto = mb_convert_encoding($texto, 'UTF-8', $enc);
         }
 
-        // Remove acentos: tenta transliterator (intl), depois iconv, senão deixa como está
+        // 2) Padroniza hífens diferentes para "-"
+        $texto = str_replace(["–", "—", "-"], "-", $texto);
+
+        // 3) Remove acentos / caracteres especiais de forma confiável
+        // Preferência: intl (melhor). Fallback: iconv.
         if (function_exists('transliterator_transliterate')) {
-            $texto2 = transliterator_transliterate('Any-Latin; Latin-ASCII', $texto);
-            if (is_string($texto2) && $texto2 !== '') {
-                $texto = $texto2;
+            $texto = transliterator_transliterate('Any-Latin; Latin-ASCII; [\u0080-\u7fff] remove', $texto);
+        } elseif (function_exists('iconv')) {
+            $tmp = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $texto);
+            if ($tmp !== false && $tmp !== '') {
+                $texto = $tmp;
             }
-        } else {
-            $texto2 = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $texto);
-            if (is_string($texto2) && $texto2 !== '') {
-                $texto = $texto2;
-            }
-            // se iconv falhar, mantém $texto original (não deixa virar false)
         }
 
-        // Agora sempre garantimos que é string
-        $texto = (string) $texto;
+        // 4) Uppercase
+        $texto = strtoupper($texto);
 
-        // Remove caracteres especiais (mantém letras, números e espaço)
-        $texto = preg_replace('/[^a-zA-Z0-9\s]/', '', $texto);
-        if (! is_string($texto)) {
-            $texto = '';
-        }
+        // 5) Mantém letras, números, espaço e hífen
+        $texto = preg_replace('/[^A-Z0-9\s\-\%]/', '', $texto);
 
-        // Normaliza espaços
+        // 6) Normaliza espaços
         $texto = preg_replace('/\s+/', ' ', $texto);
-        if (! is_string($texto)) {
-            $texto = '';
-        }
 
         return trim($texto);
     }

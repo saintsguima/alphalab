@@ -99,6 +99,7 @@
                         if ($permissoes['0403'] == 1) {
                             $menu04 .= '<li> <a class="has-arrow" href="javascript:;"><i class="bx bx-dollar"></i>Conta Corrente</a>';
                         }
+
                         $menu04 .= '<ul>';
                         if ($permissoes['040301'] == 1) {
                             $menu04 .= '<li> <a href="' . $GLOBALS["APP_HOST"] . 'list-cc.php"><i class="bx bx-list-ol"></i>Listar</a></li>';
@@ -107,7 +108,15 @@
                             $menu04 .= '<li> <a href="' . $GLOBALS["APP_HOST"] . 'crud-cc.php?acao=1"><i class="bx bx-list-plus"></i>Adicionar</a></li>';
                         }
 
-                        $menu04 .= '</ul></li></ul></li><li class="menu-separator"><hr/></li>';
+                        $menu04 .= '</ul>';
+                        if ($permissoes['0404'] == 1) {
+                            $menu04 .= '<li> <a href="' . $GLOBALS["APP_HOST"] . 'crud-excecao.php?acao=1"><i class="bx bx-notification-off"></i>Exceção</a></li>';
+                        }
+                        if ($permissoes['0405'] == 1) {
+                            $menu04 .= '<li> <a href="' . $GLOBALS["APP_HOST"] . 'crud-plano.php?acao=1"><i class="bx bx-plus-medical"></i>Plano</a></li>';
+                        }
+
+                        $menu04 .= '</li></ul></li><li class="menu-separator"><hr/></li>';
 
                         echo $menu04;
 
@@ -130,6 +139,9 @@
                         }
                         if ($permissoes['0503'] == 1) {
                             $menu05 .= '<li> <a href="' . $GLOBALS["APP_HOST"] . 'list-cr-erro.php"><i class="bx bx-error"></i>Erro de Carga</a></li>';
+                        }
+                        if ($permissoes['0504'] == 1) {
+                            $menu05 .= '<li> <a href="' . $GLOBALS["APP_HOST"] . 'list-ajuste.php"><i class="bx bx-slider"></i>Ajuste</a></li>';
                         }
 
                         $menu05 .= '</ul></li><li class="menu-separator"><hr/></li>';

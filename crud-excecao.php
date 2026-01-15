@@ -1,9 +1,8 @@
 <?php
     include "if-logged.php";
-    if ($_SESSION['perfil_permissoes']['0501'] == 0) {
+    if ($_SESSION['perfil_permissoes']['0404'] == 0) {
     header("Location: " . $GLOBALS['HOST'] . $GLOBALS['APP_HOST'] . "index.php");
     }
-
 ?>
 
 <!doctype html>
@@ -31,13 +30,17 @@
             <div class="page-content">
                 <!--breadcrumb-->
                 <div class="page-breadcrumb d-none d-sm-flex align-items-center mb-3">
-                    <div class="breadcrumb-title pe-3">Contas a Receber</div>
+                    <div class="breadcrumb-title pe-3">
+                        Clientes
+                    </div>
                     <div class="ps-3">
                         <nav aria-label="breadcrumb">
                             <ol class="breadcrumb mb-0 p-0">
                                 <li class="breadcrumb-item"><a href="javascript:;"><i class="bx bx-home-alt"></i></a>
                                 </li>
-                                <li class="breadcrumb-item active" aria-current="page">Listar (Upload)</li>
+                                <li class="breadcrumb-item active" aria-current="page">
+                                    Exceção
+                                </li>
                             </ol>
                         </nav>
                     </div>
@@ -46,77 +49,55 @@
                 <div class="container">
                     <div class="main-body">
                         <div class="card">
-                            <div class="card-body">
-                                <div class="table-responsive">
-                                    <div class="row mb-3">
-
-                                        <div class="col-md-4">
-                                            <label for="cboCliente" class="form-label">Cliente</label>
-                                            <div class="input-group">
-                                                <div class="input-group-text"><i class='bx bx-male'></i></div>
-                                                <select class="form-select" id="cboCliente"
-                                                    data-placeholder="Clientes ...">
-                                                </select>
-                                            </div>
+                            <div class="card-body p-4">
+                                <h5 class="mb-4">Cliente</h5>
+                                <form class="row g-3">
+                                    <div class="col-md-6">
+                                        <label for="txtNome" class="form-label">Nome</label>
+                                        <div class="position-relative input-icon">
+                                            <input type="text" class="form-control" id="txtNome" name="txtNome"
+                                                placeholder="Nome">
+                                            <span class="position-absolute top-50 translate-middle-y"><i
+                                                    class='bx bx-user'></i></span>
                                         </div>
-
-                                        <div class="col-md-3">
-                                            <label for="txtDtInicial" class="form-label">Data Início</label>
-                                            <div class="position-relative input-icon">
-                                                <input type="month" class="form-control" id="txtDtInicial"
-                                                    name="txtDtInicial" placeholder="Data Início">
-                                                <span class="position-absolute top-50 translate-middle-y"><i
-                                                        class='bx bx-calendar-alt'></i></span>
-                                            </div>
-                                        </div>
-
-                                        <div class="col-md-3">
-                                            <label for="txtDtFinal" class="form-label">Data Final</label>
-                                            <div class="position-relative input-icon">
-                                                <input type="month" class="form-control" id="txtDtFinal"
-                                                    name="txtDtFinal" placeholder="Data Final">
-                                                <span class="position-absolute top-50 translate-middle-y"><i
-                                                        class='bx bx-calendar-alt'></i></span>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-2" style="padding-top:30px">
-                                            <button type="button" id="cmdPesquisarPorData"
-                                                class="btn btn-success px-4">Pesquisar</button>
-                                        </div>
-
                                     </div>
-
-                                    <table id="dtCR" class="display" style="width:100%">
-                                        <thead>
-                                            <tr>
-                                                <th>Cliente</th>
-                                                <th>Data Início</th>
-                                                <th>Data Final</th>
-                                                <th>Valor C.R.</th>
-                                                <th>Valor Conciliado</th>
-                                                <th>Data Criação</th>
-                                                <!-- <th>Ativo</th> -->
-                                            </tr>
-                                        </thead>
-                                    </table>
+                                    <div class="col-md-12">
+                                        <div class="d-md-flex d-grid align-items-center gap-3">
+                                            <button type="button" id="cmdOk" class="btn btn-primary px-4">Ok</button>
+                                        </div>
+                                    </div>
+                                </form>
+                                <div class="card">
+                                    <div class="card-body">
+                                        <div class="table-responsive">
+                                            <table id="dtExcecao" class="display" style="width:100%">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Nome</th>
+                                                        <th>Excluir</th>
+                                                    </tr>
+                                                </thead>
+                                            </table>
+                                        </div>
+                                    </div>
                                 </div>
+
                             </div>
                         </div>
-
                     </div>
                 </div>
             </div>
         </div>
-    </div>
-    <!--end page wrapper -->
-    <!--start overlay-->
-    <div class="overlay toggle-icon"></div>
-    <!--end overlay-->
-    <!--Start Back To Top Button--> <a href="javaScript:;" class="back-to-top"><i class='bx bxs-up-arrow-alt'></i></a>
-    <!--End Back To Top Button-->
-    <?php
-        include "footer.php";
-    ?>
+        <!--end page wrapper -->
+        <!--start overlay-->
+        <div class="overlay toggle-icon"></div>
+        <!--end overlay-->
+        <!--Start Back To Top Button--> <a href="javaScript:;" class="back-to-top"><i
+                class='bx bxs-up-arrow-alt'></i></a>
+        <!--End Back To Top Button-->
+        <?php
+            include "footer.php";
+        ?>
     </div>
     <!--end wrapper-->
 
@@ -204,18 +185,24 @@
     </div>
     <!-- end search modal -->
 
-
-
     <?php
         include "foot.php";
     ?>
-    <script src="assets/js/pages/list-cr.js?v=1"></script>
-    <script src="assets/plugins/datatable/js/jquery.dataTables.min.js"></script>
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
     <script>
     const HOST = "<?php echo $GLOBALS['HOST'] ?>";
     const APP_HOST = "<?php echo $GLOBALS['APP_HOST'] ?>";
     const API_URL = "<?php echo $GLOBALS['API_URL'] ?>";
+    </script>
+
+    <script src="assets/js/pages/crud-excecao.js?v=2"></script>
+    <script src="assets/plugins/datatable/js/jquery.dataTables.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+    <script>
+    acao = document.getElementById("hdnAcao").value;
+    acao = acao - 0;
+    if (acao === 2) {
+        getClienteById('<?php echo $_GET["clienteId"] ?>')
+    }
     </script>
 </body>
 

@@ -3,32 +3,28 @@
     if ($_SESSION['perfil_permissoes']['0501'] == 0) {
     header("Location: " . $GLOBALS['HOST'] . $GLOBALS['APP_HOST'] . "index.php");
     }
-
 ?>
 
 <!doctype html>
 <html lang="en" class="semi-dark">
 
-<?php
-    include "head.php";
-?>
+<?php include "head.php"; ?>
 
 <body>
     <!--wrapper-->
     <div class="wrapper">
         <!--sidebar wrapper -->
-        <?php
-            include "side-bar.php";
-        ?>
+        <?php include "side-bar.php"; ?>
         <!--end sidebar wrapper -->
+
         <!--start header -->
-        <?php
-            include "header.php";
-        ?>
+        <?php include "header.php"; ?>
         <!--end header -->
+
         <!--start page wrapper -->
         <div class="page-wrapper">
             <div class="page-content">
+
                 <!--breadcrumb-->
                 <div class="page-breadcrumb d-none d-sm-flex align-items-center mb-3">
                     <div class="breadcrumb-title pe-3">Contas a Receber</div>
@@ -37,17 +33,19 @@
                             <ol class="breadcrumb mb-0 p-0">
                                 <li class="breadcrumb-item"><a href="javascript:;"><i class="bx bx-home-alt"></i></a>
                                 </li>
-                                <li class="breadcrumb-item active" aria-current="page">Listar (Upload)</li>
+                                <li class="breadcrumb-item active" aria-current="page">Listar (Ajuste)</li>
                             </ol>
                         </nav>
                     </div>
                 </div>
                 <!--end breadcrumb-->
+
                 <div class="container">
                     <div class="main-body">
                         <div class="card">
                             <div class="card-body">
                                 <div class="table-responsive">
+
                                     <div class="row mb-3">
 
                                         <div class="col-md-4">
@@ -55,8 +53,7 @@
                                             <div class="input-group">
                                                 <div class="input-group-text"><i class='bx bx-male'></i></div>
                                                 <select class="form-select" id="cboCliente"
-                                                    data-placeholder="Clientes ...">
-                                                </select>
+                                                    data-placeholder="Clientes ..."></select>
                                             </div>
                                         </div>
 
@@ -79,6 +76,7 @@
                                                         class='bx bx-calendar-alt'></i></span>
                                             </div>
                                         </div>
+
                                         <div class="col-md-2" style="padding-top:30px">
                                             <button type="button" id="cmdPesquisarPorData"
                                                 class="btn btn-success px-4">Pesquisar</button>
@@ -95,32 +93,60 @@
                                                 <th>Valor C.R.</th>
                                                 <th>Valor Conciliado</th>
                                                 <th>Data Criação</th>
-                                                <!-- <th>Ativo</th> -->
                                             </tr>
                                         </thead>
                                     </table>
+
                                 </div>
                             </div>
                         </div>
 
                     </div>
                 </div>
+
             </div>
         </div>
-    </div>
-    <!--end page wrapper -->
-    <!--start overlay-->
-    <div class="overlay toggle-icon"></div>
-    <!--end overlay-->
-    <!--Start Back To Top Button--> <a href="javaScript:;" class="back-to-top"><i class='bx bxs-up-arrow-alt'></i></a>
-    <!--End Back To Top Button-->
-    <?php
-        include "footer.php";
-    ?>
+        <!--end page wrapper -->
+
+        <!--start overlay-->
+        <div class="overlay toggle-icon"></div>
+        <!--end overlay-->
+
+        <!--Start Back To Top Button-->
+        <a href="javaScript:;" class="back-to-top"><i class='bx bxs-up-arrow-alt'></i></a>
+        <!--End Back To Top Button-->
+
+        <?php include "footer.php"; ?>
+
     </div>
     <!--end wrapper-->
 
-    <!-- search modal -->
+
+    <!-- MODAL AJUSTE VL TOTAL -->
+    <div class="modal fade" id="modalAjusteVlTotal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Ajustar Valor C.R.</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <label for="txtNovoVlTotal" class="form-label">Novo valor</label>
+                    <input type="text" class="form-control" id="txtNovoVlTotal" placeholder="0,00" inputmode="numeric"
+                        autocomplete="off">
+                    <small class="text-muted">Digite apenas números. Formato brasileiro. Não aceita valor
+                        negativo.</small>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" id="cmdSalvarVlTotal">Ok</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- search modal (mantido igual ao template) -->
     <div class="modal" id="SearchModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down">
             <div class="modal-content">
@@ -205,13 +231,12 @@
     <!-- end search modal -->
 
 
+    <?php include "foot.php"; ?>
 
-    <?php
-        include "foot.php";
-    ?>
-    <script src="assets/js/pages/list-cr.js?v=1"></script>
+    <script src="assets/js/pages/list-ajuste.js?v=2"></script>
     <script src="assets/plugins/datatable/js/jquery.dataTables.min.js"></script>
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+
     <script>
     const HOST = "<?php echo $GLOBALS['HOST'] ?>";
     const APP_HOST = "<?php echo $GLOBALS['APP_HOST'] ?>";

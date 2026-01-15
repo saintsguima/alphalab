@@ -178,8 +178,10 @@ $(document).ready(function () {
         $('#swt0403').prop('checked', estaChecado);
         $('#swt040301').prop('checked', estaChecado);
         $('#swt040302').prop('checked', estaChecado);
+        $('#swt0404').prop('checked', estaChecado);
+        $('#swt0405').prop('checked', estaChecado);
 
-        setEstado('04,0401,0402,0403,040301,040302', estaChecado);
+        setEstado('04,0401,0402,0403,040301,040302,0404', estaChecado);
     });
 
     $('#swt0401').on('change', function () {
@@ -235,7 +237,25 @@ $(document).ready(function () {
         setEstado('040302', estaChecado);
     });
 
+    $('#swt0404').on('change', function () {
 
+        const estaChecado = $(this).prop('checked');
+        if (estaChecado) {
+            $('#swt04').prop('checked', estaChecado);
+            setEstado('04', estaChecado);
+        }
+        setEstado('0404', estaChecado);
+    });
+
+    $('#swt0405').on('change', function () {
+
+        const estaChecado = $(this).prop('checked');
+        if (estaChecado) {
+            $('#swt04').prop('checked', estaChecado);
+            setEstado('04', estaChecado);
+        }
+        setEstado('0405', estaChecado);
+    });
 
     $('#swt0403').on('change', function () {
 
@@ -243,7 +263,7 @@ $(document).ready(function () {
         $('#swt040301').prop('checked', estaChecado);
         $('#swt040302').prop('checked', estaChecado);
 
-        setEstado('0403,040301,040302', estaChecado);
+        setEstado('0403,040301,040302,0404,0405', estaChecado);
     });
 
     $('#swt05').on('change', function () {
@@ -252,8 +272,9 @@ $(document).ready(function () {
         $('#swt0501').prop('checked', estaChecado);
         $('#swt0502').prop('checked', estaChecado);
         $('#swt0503').prop('checked', estaChecado);
+        $('#swt0504').prop('checked', estaChecado);
 
-        setEstado('05,0501,0502,0503', estaChecado);
+        setEstado('05,0501,0502,0503,0504', estaChecado);
     });
 
     $('#swt0501').on('change', function () {
@@ -284,6 +305,15 @@ $(document).ready(function () {
             setEstado('05', estaChecado);
         }
         setEstado('0503', estaChecado);
+    });
+
+    $('#swt0504').on('change', function () {
+        const estaChecado = $(this).prop('checked');
+        if (estaChecado) {
+            $('#swt05').prop('checked', estaChecado);
+            setEstado('05', estaChecado);
+        }
+        setEstado('0504', estaChecado);
     });
 
 
