@@ -126,7 +126,7 @@
                 </div>
                 <!--end row-->
 
-                <div class="card">
+                <div class="card" style="display:none">
                     <div class="card-body">
                         <div class="row align-items-center">
                             <div class="col-md-3">

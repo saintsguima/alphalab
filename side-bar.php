@@ -190,7 +190,7 @@
 								<ul>';
 
                         if ($permissoes['0701'] == 1) {
-                            $menu07 .= '<li> <a href="' . $GLOBALS["APP_HOST"] . 'send-whatsapp.php"><i class="bx bx-phone-outgoing"></i>Whatsapp</a></li>';
+                            $menu07 .= '<li> <a href="' . $GLOBALS["APP_HOST"] . 'send-whatsapp.php"><i class="lni lni-whatsapp"></i>Whatsapp</a></li>';
                         }
 
                         if ($permissoes['0702'] == 1) {
