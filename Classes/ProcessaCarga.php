@@ -1,18 +1,30 @@
 <?php
-/**
- * ProcessaCarga.php (v3)
- * - Aceita registros SEM CnpjCpf desde que exista Cliente (Nome)
- * - Ignora a ÚLTIMA linha do CSV (não processa)
- * - Compatível com PHP 7.0+ (sem arrow function e sem typed properties)
- */
+
 class ProcessaCarga
 {
     /** @var PDO */
     private $pdo;
 
+    /** @var array */
+    private $termosPlano = [];
+
+    /** @var array */
+    private $termosExcecao = [];
+
     public function __construct(PDO $pdo)
     {
         $this->pdo = $pdo;
+
+        // Ajuda a evitar HY093 em alguns ambientes antigos
+        try {
+            $this->pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, true);
+        } catch (Exception $e) {
+            // ignora se não suportar
+        }
+
+        // Carrega termos no construtor, igual ao ProcessaCR
+        $this->termosExcecao = $this->loadTermsFromTable('Excecao');
+        $this->termosPlano   = $this->loadTermsFromTable('Plano');
     }
 
     /**
@@ -120,7 +132,7 @@ class ProcessaCarga
      * Processa uma linha de dados já após o cabeçalho.
      * Retorna:
      * - ['status'=>'ok'] quando gravou/atualizou com sucesso
-     * - ['status'=>'skip'] quando ignorou linha (totalizador/lixo)
+     * - ['status'=>'skip'] quando ignorou linha (totalizador/lixo/regras)
      * - ['status'=>'fail','error'=>msg] quando deu erro
      */
     private function processDataRow(array $row, $linhaNum)
@@ -140,7 +152,19 @@ class ProcessaCarga
             }
         }
 
-        $clienteNorm = $this->removerCaracteresEspeciais(strtoupper($clienteRaw));
+        // Normalização para REGRAS de termos (Plano/Excecao)
+        $clienteNormMatch = $this->normalizeForMatch($clienteRaw);
+
+        // (Regra equivalente ao ProcessaCR, mas com Plano apenas no FINAL)
+        // - Plano: termina com termo (somente no final)
+        // - Exceção: contém termo em qualquer lugar
+        if ($this->endsWithAnyTerm($clienteNormMatch, $this->termosPlano) ||
+            $this->containsAnyTerm($clienteNormMatch, $this->termosExcecao)) {
+            return ['status' => 'skip'];
+        }
+
+        // Normalização para persistência/busca no seu banco (mantém sua lógica existente)
+        $clienteNormDb = $this->removerCaracteresEspeciais(strtoupper($clienteRaw));
 
         $valor = $this->parseMoney($valRaw);
         if ($valor === null) {
@@ -152,7 +176,7 @@ class ProcessaCarga
 
         // Regra: precisa ter Cliente (Nome).
         // Se não tiver, e parecer um totalizador/lixo, ignora sem erro.
-        if ($clienteNorm === '') {
+        if ($clienteNormDb === '') {
             if ($docRaw === '' && $emailRaw === '' && $telefoneRaw === '' && $valor > 0) {
                 return ['status' => 'skip'];
             }
@@ -171,11 +195,11 @@ class ProcessaCarga
         try {
             // Busca cliente:
             // - Se doc válido: busca por CPF/CNPJ
-            // - Senão: busca por Nome (normalizado)
+            // - Senão: busca por Nome (normalizado conforme DB)
             if ($isDocValido) {
                 $clienteId = $this->findUserIdByCpfCnpj($digits);
             } else {
-                $clienteId = $this->findUserIdByName($clienteNorm);
+                $clienteId = $this->findUserIdByName($clienteNormDb);
             }
 
             if (! $clienteId) {
@@ -199,7 +223,147 @@ class ProcessaCarga
         }
     }
 
-    /* ========================= AUXILIARES ========================= */
+    /* ========================= TERMOS (Plano/Excecao) ========================= */
+
+    private function loadTermsFromTable($tableName)
+    {
+        try {
+            $sql  = "SELECT Nome FROM " . $tableName;
+            $stmt = $this->pdo->query($sql);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $out = [];
+            foreach ($rows as $r) {
+                $nome = trim(isset($r['Nome']) ? (string) $r['Nome'] : '');
+                if ($nome === '') {
+                    continue;
+                }
+                $out[] = $this->normalizeForMatch($nome);
+            }
+
+            // remove duplicados
+            $uniq = [];
+            foreach ($out as $v) {
+                if ($v !== '' && ! in_array($v, $uniq, true)) {
+                    $uniq[] = $v;
+                }
+            }
+
+            return array_values($uniq);
+        } catch (Exception $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Exceção: termo em qualquer parte do texto (já normalizado)
+     */
+    private function containsAnyTerm($haystackNorm, array $terms)
+    {
+        if ($haystackNorm === '' || empty($terms)) {
+            return false;
+        }
+
+        foreach ($terms as $term) {
+            if ($term === '') {
+                continue;
+            }
+
+            if (strpos($haystackNorm, $term) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Plano: termo SOMENTE NO FINAL do texto (já normalizado)
+     * Compatível com PHP 7.0+ (sem str_ends_with)
+     */
+    private function endsWithAnyTerm($textoNorm, array $terms)
+    {
+        if ($textoNorm === '' || empty($terms)) {
+            return false;
+        }
+
+        $textoNorm = rtrim($textoNorm);
+
+        foreach ($terms as $term) {
+            if ($term === null || $term === '') {
+                continue;
+            }
+
+            $term = rtrim((string) $term);
+            $len  = strlen($term);
+
+            if ($len === 0) {
+                continue;
+            }
+
+            if (substr($textoNorm, -$len) === $term) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Normalização para comparação (igual à ideia do ProcessaCR):
+     * - tenta converter para UTF-8
+     * - padroniza hífens
+     * - remove acentos (intl->iconv)
+     * - UPPERCASE
+     * - mantém letras/números/espaço/hífen/% (remove resto)
+     * - normaliza espaços
+     */
+    private function normalizeForMatch($texto)
+    {
+        if ($texto === null) {
+            return '';
+        }
+
+        $texto = trim((string) $texto);
+        if ($texto === '') {
+            return '';
+        }
+
+        // 1) Detecta encoding provável do CSV e converte pra UTF-8
+        if (function_exists('mb_detect_encoding') && function_exists('mb_convert_encoding')) {
+            $enc = mb_detect_encoding($texto, ['UTF-8', 'Windows-1252', 'ISO-8859-1'], true);
+            if ($enc === false) {
+                $enc = 'Windows-1252';
+            }
+            $texto = mb_convert_encoding($texto, 'UTF-8', $enc);
+        }
+
+        // 2) Padroniza hífens diferentes para "-"
+        $texto = str_replace(["–", "—", "-"], "-", $texto);
+
+        // 3) Remove acentos / caracteres especiais de forma confiável
+        if (function_exists('transliterator_transliterate')) {
+            $texto = transliterator_transliterate('Any-Latin; Latin-ASCII; [\u0080-\u7fff] remove', $texto);
+        } elseif (function_exists('iconv')) {
+            $tmp = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $texto);
+            if ($tmp !== false && $tmp !== '') {
+                $texto = $tmp;
+            }
+        }
+
+        // 4) Uppercase
+        $texto = strtoupper($texto);
+
+        // 5) Mantém letras, números, espaço, hífen e %
+        $texto = preg_replace('/[^A-Z0-9\s\-\%]/', '', $texto);
+
+        // 6) Normaliza espaços
+        $texto = preg_replace('/\s+/', ' ', $texto);
+
+        return trim($texto);
+    }
+
+    /* ========================= AUXILIARES EXISTENTES ========================= */
 
     private function onlyDigits($s)
     {
@@ -321,7 +485,7 @@ class ProcessaCarga
         $texto = strtr($texto, $map);
 
         // Remove caracteres indesejados
-        // MANTÉM letras, números, espaço e hífen
+        // MANTÉM letras, números, espaço, hífen e %
         $texto = preg_replace('/[^A-Z0-9\s\-\%]/u', '', $texto);
 
         // Normaliza múltiplos espaços
@@ -329,5 +493,4 @@ class ProcessaCarga
 
         return trim($texto);
     }
-
 }

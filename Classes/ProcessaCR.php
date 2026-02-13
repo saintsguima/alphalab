@@ -128,7 +128,7 @@ class ProcessaCR
         // (4.2) Descartar se Cliente contém termo de Plano ou Excecao
         $clienteNorm = $this->normalizeForMatch($clienteRaw);
 
-        if ($this->containsAnyTerm($clienteNorm, $this->termosPlano) ||
+        if ($this->endsWithAnyTerm($clienteNorm, $this->termosPlano) ||
             $this->containsAnyTerm($clienteNorm, $this->termosExcecao)) {
             return;
         }
@@ -495,6 +495,31 @@ class ProcessaCR
         $texto = preg_replace('/\s+/', ' ', $texto);
 
         return trim($texto);
+    }
+
+    private function endsWithAnyTerm(string $texto, array $termos): bool
+    {
+        if ($texto === '' || empty($termos)) {
+            return false;
+        }
+
+        // Remove espaços no final
+        $texto = rtrim($texto);
+
+        foreach ($termos as $termo) {
+
+            if ($termo === null || $termo === '') {
+                continue;
+            }
+
+            $termo = rtrim($termo);
+
+            if (str_ends_with($texto, $termo)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
 }
