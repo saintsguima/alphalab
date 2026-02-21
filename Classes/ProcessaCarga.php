@@ -84,7 +84,9 @@ class ProcessaCarga
             // Limpa para comparar cabeçalho
             $linhaAtualLimpa = [];
             foreach ($row as $v) {
-                $linhaAtualLimpa[] = trim((string) ($v === null ? '' : $v));
+                $v                 = ($v === null ? '' : (string) $v);
+                $v                 = $this->repararMojibake($v); // <--- garante que o campo não está "Ã‡Ãƒ"
+                $linhaAtualLimpa[] = trim($v);
             }
 
             // Ainda buscando cabeçalho
@@ -471,57 +473,26 @@ class ProcessaCarga
             return '';
         }
 
-        // Remove bytes nulos (podem quebrar detecção/conversão)
+        // remove byte nulo
         $texto = str_replace("\0", '', $texto);
 
-        /**
-         * 1) Garante UTF-8 REAL (detecta e converte quando necessário)
-         */
-        if (function_exists('mb_check_encoding') && function_exists('mb_convert_encoding')) {
+        // 1) Repara "mojibake" típico: ÇÃ -> Ã‡Ãƒ, etc.
+        // Ex: "LICITAÃ‡ÃƒO" => "LICITAÇÃO"
+        $texto = $this->repararMojibake($texto);
 
-            // Se NÃO for UTF-8 válido, detecta e converte
-            if (! mb_check_encoding($texto, 'UTF-8')) {
-                $enc = mb_detect_encoding($texto, ['UTF-8', 'Windows-1252', 'ISO-8859-1'], true);
-                if ($enc === false) {
-                    $enc = 'Windows-1252'; // Excel costuma cair aqui
-                }
-                $texto = mb_convert_encoding($texto, 'UTF-8', $enc);
-            } else {
-                // Se já é UTF-8, ainda pode estar "mojibake" (UTF-8 lido como Win-1252 antes).
-                // Ex.: "LICITAÃ‡ÃƒO" -> "LICITAÇÃO"
-                if (preg_match('/Ã.|Â.|�/u', $texto)) {
-                    $fix = mb_convert_encoding($texto, 'UTF-8', 'Windows-1252');
-                    // Aplica a correção só se melhorou (heurística simples)
-                    if ($fix !== '' && ! preg_match('/Ã.|Â.|�/u', $fix)) {
-                        $texto = $fix;
-                    }
-                }
-            }
-        }
+        // 2) Padroniza hífens
+        $texto = str_replace(["–", "—", "−"], "-", $texto);
 
-        /**
-         * 2) Padroniza hífens diferentes para "-"
-         */
-        $texto = str_replace(["–", "—", "-", "−"], "-", $texto);
+        // 3) Uppercase
+        $texto = function_exists('mb_strtoupper')
+            ? mb_strtoupper($texto, 'UTF-8')
+            : strtoupper($texto);
 
-        /**
-         * 3) Converte para MAIÚSCULO (após garantir UTF-8)
-         */
-        if (function_exists('mb_strtoupper')) {
-            $texto = mb_strtoupper($texto, 'UTF-8');
-        } else {
-            $texto = strtoupper($texto);
-        }
-
-        /**
-         * 4) Remove acentos de forma confiável
-         * Preferência: intl (transliterator). Fallback: mapa manual.
-         */
+        // 4) Remove acentos (preferência intl)
         if (function_exists('transliterator_transliterate')) {
-            // Remove marcas de acento mantendo letras
             $texto = transliterator_transliterate('NFD; [:Nonspacing Mark:] Remove; NFC', $texto);
         } else {
-            // Fallback manual (suficiente para PT-BR em MAIÚSCULO)
+            // fallback manual
             $map = [
                 'Á' => 'A', 'À' => 'A', 'Â' => 'A', 'Ã' => 'A',
                 'É' => 'E', 'È' => 'E', 'Ê' => 'E',
@@ -533,17 +504,59 @@ class ProcessaCarga
             $texto = strtr($texto, $map);
         }
 
-        /**
-         * 5) Remove caracteres indesejados
-         * Mantém: letras, números, espaço, hífen e %
-         */
+        // 5) Mantém letras, números, espaço, hífen e %
         $texto = preg_replace('/[^A-Z0-9\s\-\%]/u', '', $texto);
 
-        /**
-         * 6) Normaliza múltiplos espaços
-         */
+        // 6) Normaliza espaços
         $texto = preg_replace('/\s+/', ' ', $texto);
 
         return trim($texto);
+    }
+
+/**
+ * Repara texto que já está em UTF-8, mas com caracteres típicos de
+ * UTF-8 lido como Windows-1252 (Ã, Â, � etc).
+ *
+ * Exemplo:
+ *   "LICITAÃ‡ÃƒO" -> "LICITAÇÃO"
+ */
+    private function repararMojibake($texto)
+    {
+        // Só tenta reparar se houver "assinatura" de mojibake
+        if (! preg_match('/[ÃÂ�]/u', $texto)) {
+            return $texto;
+        }
+
+        // Se não tiver mbstring, tenta iconv simples
+        if (! function_exists('mb_convert_encoding')) {
+            if (function_exists('iconv')) {
+                $tmp = @iconv('Windows-1252', 'UTF-8//IGNORE', $texto);
+                return ($tmp !== false && $tmp !== '') ? $tmp : $texto;
+            }
+            return $texto;
+        }
+
+        /**
+         * Truque que costuma resolver:
+         * 1) converte do UTF-8 atual para Windows-1252 (gera bytes "originais")
+         * 2) converte esses bytes de Windows-1252 para UTF-8 (decodifica corretamente)
+         */
+        $tmp = @mb_convert_encoding($texto, 'Windows-1252', 'UTF-8');
+        if ($tmp === false || $tmp === '') {
+            return $texto;
+        }
+
+        $fix = @mb_convert_encoding($tmp, 'UTF-8', 'Windows-1252');
+        if ($fix === false || $fix === '') {
+            return $texto;
+        }
+
+        // Heurística: se piorou, não aplica
+        // (evita mexer em texto que já estava correto)
+        if (substr_count($fix, 'Ã') > substr_count($texto, 'Ã')) {
+            return $texto;
+        }
+
+        return $fix;
     }
 }
