@@ -462,33 +462,86 @@ class ProcessaCarga
 
     private function removerCaracteresEspeciais($texto)
     {
-        if ($texto === null || $texto === '') {
+        if ($texto === null) {
             return '';
         }
 
-        // Garante UTF-8
-        $texto = mb_convert_encoding($texto, 'UTF-8', 'UTF-8');
+        $texto = (string) $texto;
+        if ($texto === '') {
+            return '';
+        }
 
-        // Converte para MAIÚSCULO antes
-        $texto = mb_strtoupper($texto, 'UTF-8');
+        // Remove bytes nulos (podem quebrar detecção/conversão)
+        $texto = str_replace("\0", '', $texto);
 
-        // Remove acentos manualmente (mais confiável que iconv)
-        $map = [
-            'Á' => 'A', 'À' => 'A', 'Â' => 'A', 'Ã' => 'A',
-            'É' => 'E', 'È' => 'E', 'Ê' => 'E',
-            'Í' => 'I', 'Ì' => 'I', 'Î' => 'I',
-            'Ó' => 'O', 'Ò' => 'O', 'Ô' => 'O', 'Õ' => 'O',
-            'Ú' => 'U', 'Ù' => 'U', 'Û' => 'U',
-            'Ç' => 'C',
-        ];
+        /**
+         * 1) Garante UTF-8 REAL (detecta e converte quando necessário)
+         */
+        if (function_exists('mb_check_encoding') && function_exists('mb_convert_encoding')) {
 
-        $texto = strtr($texto, $map);
+            // Se NÃO for UTF-8 válido, detecta e converte
+            if (! mb_check_encoding($texto, 'UTF-8')) {
+                $enc = mb_detect_encoding($texto, ['UTF-8', 'Windows-1252', 'ISO-8859-1'], true);
+                if ($enc === false) {
+                    $enc = 'Windows-1252'; // Excel costuma cair aqui
+                }
+                $texto = mb_convert_encoding($texto, 'UTF-8', $enc);
+            } else {
+                // Se já é UTF-8, ainda pode estar "mojibake" (UTF-8 lido como Win-1252 antes).
+                // Ex.: "LICITAÃ‡ÃƒO" -> "LICITAÇÃO"
+                if (preg_match('/Ã.|Â.|�/u', $texto)) {
+                    $fix = mb_convert_encoding($texto, 'UTF-8', 'Windows-1252');
+                    // Aplica a correção só se melhorou (heurística simples)
+                    if ($fix !== '' && ! preg_match('/Ã.|Â.|�/u', $fix)) {
+                        $texto = $fix;
+                    }
+                }
+            }
+        }
 
-        // Remove caracteres indesejados
-        // MANTÉM letras, números, espaço, hífen e %
+        /**
+         * 2) Padroniza hífens diferentes para "-"
+         */
+        $texto = str_replace(["–", "—", "-", "−"], "-", $texto);
+
+        /**
+         * 3) Converte para MAIÚSCULO (após garantir UTF-8)
+         */
+        if (function_exists('mb_strtoupper')) {
+            $texto = mb_strtoupper($texto, 'UTF-8');
+        } else {
+            $texto = strtoupper($texto);
+        }
+
+        /**
+         * 4) Remove acentos de forma confiável
+         * Preferência: intl (transliterator). Fallback: mapa manual.
+         */
+        if (function_exists('transliterator_transliterate')) {
+            // Remove marcas de acento mantendo letras
+            $texto = transliterator_transliterate('NFD; [:Nonspacing Mark:] Remove; NFC', $texto);
+        } else {
+            // Fallback manual (suficiente para PT-BR em MAIÚSCULO)
+            $map = [
+                'Á' => 'A', 'À' => 'A', 'Â' => 'A', 'Ã' => 'A',
+                'É' => 'E', 'È' => 'E', 'Ê' => 'E',
+                'Í' => 'I', 'Ì' => 'I', 'Î' => 'I',
+                'Ó' => 'O', 'Ò' => 'O', 'Ô' => 'O', 'Õ' => 'O',
+                'Ú' => 'U', 'Ù' => 'U', 'Û' => 'U',
+                'Ç' => 'C',
+            ];
+            $texto = strtr($texto, $map);
+        }
+
+        /**
+         * 5) Remove caracteres indesejados
+         * Mantém: letras, números, espaço, hífen e %
+         */
         $texto = preg_replace('/[^A-Z0-9\s\-\%]/u', '', $texto);
 
-        // Normaliza múltiplos espaços
+        /**
+         * 6) Normaliza múltiplos espaços
+         */
         $texto = preg_replace('/\s+/', ' ', $texto);
 
         return trim($texto);
