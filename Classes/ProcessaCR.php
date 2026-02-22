@@ -126,7 +126,7 @@ class ProcessaCR
         }
 
         // (4.2) Descartar se Cliente contém termo de Plano ou Excecao
-        $clienteNorm = $this->normalizeForMatch($clienteRaw);
+        $clienteNorm = $this->removerCaracteresEspeciais($clienteRaw);
 
         if ($this->endsWithAnyTerm($clienteNorm, $this->termosPlano) ||
             $this->containsAnyTerm($clienteNorm, $this->termosExcecao)) {
@@ -297,7 +297,7 @@ class ProcessaCR
                     continue;
                 }
 
-                $out[] = $this->normalizeForMatch($nome);
+                $out[] = $this->removerCaracteresEspeciais($nome);
             }
 
             // remove duplicados
@@ -449,54 +449,6 @@ class ProcessaCR
         return null;
     }
 
-    private function normalizeForMatch($texto)
-    {
-
-        if ($texto === null) {
-            return '';
-        }
-
-        $texto = trim((string) $texto);
-        if ($texto === '') {
-            return '';
-        }
-
-        // 1) Detecta encoding provável do CSV e converte pra UTF-8
-        if (function_exists('mb_detect_encoding') && function_exists('mb_convert_encoding')) {
-            $enc = mb_detect_encoding($texto, ['UTF-8', 'Windows-1252', 'ISO-8859-1'], true);
-            if ($enc === false) {
-                // fallback: Excel costuma ser Windows-1252
-                $enc = 'Windows-1252';
-            }
-            $texto = mb_convert_encoding($texto, 'UTF-8', $enc);
-        }
-
-        // 2) Padroniza hífens diferentes para "-"
-        $texto = str_replace(["–", "—", "-"], "-", $texto);
-
-        // 3) Remove acentos / caracteres especiais de forma confiável
-        // Preferência: intl (melhor). Fallback: iconv.
-        if (function_exists('transliterator_transliterate')) {
-            $texto = transliterator_transliterate('Any-Latin; Latin-ASCII; [\u0080-\u7fff] remove', $texto);
-        } elseif (function_exists('iconv')) {
-            $tmp = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $texto);
-            if ($tmp !== false && $tmp !== '') {
-                $texto = $tmp;
-            }
-        }
-
-        // 4) Uppercase
-        $texto = strtoupper($texto);
-
-        // 5) Mantém letras, números, espaço e hífen
-        $texto = preg_replace('/[^A-Z0-9\s\-\%]/', '', $texto);
-
-        // 6) Normaliza espaços
-        $texto = preg_replace('/\s+/', ' ', $texto);
-
-        return trim($texto);
-    }
-
     private function endsWithAnyTerm(string $texto, array $termos): bool
     {
         if ($texto === '' || empty($termos)) {
@@ -522,4 +474,108 @@ class ProcessaCR
         return false;
     }
 
+    private function removerCaracteresEspeciais($texto)
+    {
+        if ($texto === null) {
+            return '';
+        }
+
+        $texto = (string) $texto;
+        if ($texto === '') {
+            return '';
+        }
+
+        $texto = str_replace("\0", '', $texto);
+
+        // 1) Corrige mojibake (ex: Ã§ Ã£ Ã¡ etc.)
+        $texto = $this->corrigirMojibakePtBr($texto);
+        // 2) Padroniza hífens
+        $texto = str_replace(["–", "—", "−"], "-", $texto);
+
+        // 3) Maiúsculo
+        $texto = function_exists('mb_strtoupper')
+            ? mb_strtoupper($texto, 'UTF-8')
+            : strtoupper($texto);
+
+        // 4) Remove acentos (preferência intl)
+        if (function_exists('transliterator_transliterate')) {
+            $texto = transliterator_transliterate('NFD; [:Nonspacing Mark:] Remove; NFC', $texto);
+        } else {
+            // fallback manual (PT-BR em MAIÚSCULO)
+            $map = [
+                'Á' => 'A', 'À' => 'A', 'Â' => 'A', 'Ã' => 'A',
+                'É' => 'E', 'È' => 'E', 'Ê' => 'E',
+                'Í' => 'I', 'Ì' => 'I', 'Î' => 'I',
+                'Ó' => 'O', 'Ò' => 'O', 'Ô' => 'O', 'Õ' => 'O',
+                'Ú' => 'U', 'Ù' => 'U', 'Û' => 'U',
+                'Ç' => 'C',
+            ];
+            $texto = strtr($texto, $map);
+        }
+
+        // 5) Mantém letras, números, espaço, hífen e %
+        $texto = preg_replace('/[^A-Z0-9\s\-\%]/u', '', $texto);
+
+        // 6) Normaliza espaços
+        $texto = preg_replace('/\s+/', ' ', $texto);
+        return trim($texto);
+    }
+
+/**
+ * Corrige mojibake comum de PT-BR vindo de CSV/Excel:
+ * "LICITAÃ§Ã£O" -> "LICITAÇÃO"
+ * "SÃ£O" -> "SÃO"
+ * "AÃ‡ÃƒO" -> "AÇÃO"
+ *
+ * Não depende de iconv/intl.
+ */
+    private function corrigirMojibakePtBr($texto)
+    {
+        // Só tenta se houver assinatura de mojibake
+        if (strpos($texto, 'Ã') === false && strpos($texto, 'Â') === false) {
+            return $texto;
+        }
+
+        // Mapa de correções mais comuns (UTF-8 mojibake -> correto)
+        // Inclui minúsculas e maiúsculas
+        $fix = [
+            // cedilha
+            'Ã§' => 'ç', 'Ã‡' => 'Ç',
+
+            // a com acento/til
+            'Ã£' => 'ã', 'Ãƒ' => 'Ã',
+            'Ã¡' => 'á', 'ÃÁ' => 'Á',
+            'Ã¢' => 'â', 'Ã‚' => 'Â',
+            'Ã¤' => 'ä', 'Ã„' => 'Ä',
+            'Ãª' => 'ê', 'ÃŠ' => 'Ê',
+            'Ã©' => 'é', 'Ã‰' => 'É',
+            'Ã¨' => 'è', 'Ãˆ' => 'È',
+            'Ã¹' => 'ù', 'Ã™' => 'Ù',
+            'Ãº' => 'ú', 'Ãš' => 'Ú',
+            'Ã»' => 'û', 'Ã›' => 'Û',
+            'Ã´' => 'ô', 'Ã”' => 'Ô',
+            'Ã³' => 'ó', 'Ã“' => 'Ó',
+            'Ã²' => 'ò', 'Ã’' => 'Ò',
+            'Ãµ' => 'õ', 'Ã•' => 'Õ',
+            'Ã­' => 'í', 'ÃÍ' => 'Í',
+            'Ã¬' => 'ì', 'ÃŒ' => 'Ì',
+            'Ã®' => 'î', 'ÃŽ' => 'Î',
+
+            // remove "Â" perdido (muito comum antes de símbolos)
+            'Â'  => '',
+        ];
+
+        // Aplica correções em loop: algumas strings vêm “duplicadas”
+        // (ex.: já passou por conversão errada mais de uma vez)
+        for ($i = 0; $i < 2; $i++) {
+            $novo = strtr($texto, $fix);
+            if ($novo === $texto) {
+                break;
+            }
+
+            $texto = $novo;
+        }
+
+        return $texto;
+    }
 }

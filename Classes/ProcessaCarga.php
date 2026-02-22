@@ -84,11 +84,8 @@ class ProcessaCarga
             // Limpa para comparar cabeçalho
             $linhaAtualLimpa = [];
             foreach ($row as $v) {
-                $v                 = ($v === null ? '' : (string) $v);
-                $v                 = $this->repararMojibake($v); // <--- garante que o campo não está "Ã‡Ãƒ"
-                $linhaAtualLimpa[] = trim($v);
+                $linhaAtualLimpa[] = trim((string) ($v === null ? '' : $v));
             }
-
             // Ainda buscando cabeçalho
             if (! $cabecalhoEncontrado) {
                 if ($linhaAtualLimpa === $cabecalhoEsperado) {
@@ -473,17 +470,14 @@ class ProcessaCarga
             return '';
         }
 
-        // remove byte nulo
         $texto = str_replace("\0", '', $texto);
 
-        // 1) Repara "mojibake" típico: ÇÃ -> Ã‡Ãƒ, etc.
-        // Ex: "LICITAÃ‡ÃƒO" => "LICITAÇÃO"
-        $texto = $this->repararMojibake($texto);
-
+        // 1) Corrige mojibake (ex: Ã§ Ã£ Ã¡ etc.)
+        $texto = $this->corrigirMojibakePtBr($texto);
         // 2) Padroniza hífens
         $texto = str_replace(["–", "—", "−"], "-", $texto);
 
-        // 3) Uppercase
+        // 3) Maiúsculo
         $texto = function_exists('mb_strtoupper')
             ? mb_strtoupper($texto, 'UTF-8')
             : strtoupper($texto);
@@ -492,7 +486,7 @@ class ProcessaCarga
         if (function_exists('transliterator_transliterate')) {
             $texto = transliterator_transliterate('NFD; [:Nonspacing Mark:] Remove; NFC', $texto);
         } else {
-            // fallback manual
+            // fallback manual (PT-BR em MAIÚSCULO)
             $map = [
                 'Á' => 'A', 'À' => 'A', 'Â' => 'A', 'Ã' => 'A',
                 'É' => 'E', 'È' => 'E', 'Ê' => 'E',
@@ -509,54 +503,64 @@ class ProcessaCarga
 
         // 6) Normaliza espaços
         $texto = preg_replace('/\s+/', ' ', $texto);
-
         return trim($texto);
     }
 
 /**
- * Repara texto que já está em UTF-8, mas com caracteres típicos de
- * UTF-8 lido como Windows-1252 (Ã, Â, � etc).
+ * Corrige mojibake comum de PT-BR vindo de CSV/Excel:
+ * "LICITAÃ§Ã£O" -> "LICITAÇÃO"
+ * "SÃ£O" -> "SÃO"
+ * "AÃ‡ÃƒO" -> "AÇÃO"
  *
- * Exemplo:
- *   "LICITAÃ‡ÃƒO" -> "LICITAÇÃO"
+ * Não depende de iconv/intl.
  */
-    private function repararMojibake($texto)
+    private function corrigirMojibakePtBr($texto)
     {
-        // Só tenta reparar se houver "assinatura" de mojibake
-        if (! preg_match('/[ÃÂ�]/u', $texto)) {
+        // Só tenta se houver assinatura de mojibake
+        if (strpos($texto, 'Ã') === false && strpos($texto, 'Â') === false) {
             return $texto;
         }
 
-        // Se não tiver mbstring, tenta iconv simples
-        if (! function_exists('mb_convert_encoding')) {
-            if (function_exists('iconv')) {
-                $tmp = @iconv('Windows-1252', 'UTF-8//IGNORE', $texto);
-                return ($tmp !== false && $tmp !== '') ? $tmp : $texto;
+        // Mapa de correções mais comuns (UTF-8 mojibake -> correto)
+        // Inclui minúsculas e maiúsculas
+        $fix = [
+            // cedilha
+            'Ã§' => 'ç', 'Ã‡' => 'Ç',
+
+            // a com acento/til
+            'Ã£' => 'ã', 'Ãƒ' => 'Ã',
+            'Ã¡' => 'á', 'ÃÁ' => 'Á',
+            'Ã¢' => 'â', 'Ã‚' => 'Â',
+            'Ã¤' => 'ä', 'Ã„' => 'Ä',
+            'Ãª' => 'ê', 'ÃŠ' => 'Ê',
+            'Ã©' => 'é', 'Ã‰' => 'É',
+            'Ã¨' => 'è', 'Ãˆ' => 'È',
+            'Ã¹' => 'ù', 'Ã™' => 'Ù',
+            'Ãº' => 'ú', 'Ãš' => 'Ú',
+            'Ã»' => 'û', 'Ã›' => 'Û',
+            'Ã´' => 'ô', 'Ã”' => 'Ô',
+            'Ã³' => 'ó', 'Ã“' => 'Ó',
+            'Ã²' => 'ò', 'Ã’' => 'Ò',
+            'Ãµ' => 'õ', 'Ã•' => 'Õ',
+            'Ã­' => 'í', 'ÃÍ' => 'Í',
+            'Ã¬' => 'ì', 'ÃŒ' => 'Ì',
+            'Ã®' => 'î', 'ÃŽ' => 'Î',
+
+            // remove "Â" perdido (muito comum antes de símbolos)
+            'Â'  => '',
+        ];
+
+        // Aplica correções em loop: algumas strings vêm “duplicadas”
+        // (ex.: já passou por conversão errada mais de uma vez)
+        for ($i = 0; $i < 2; $i++) {
+            $novo = strtr($texto, $fix);
+            if ($novo === $texto) {
+                break;
             }
-            return $texto;
+
+            $texto = $novo;
         }
 
-        /**
-         * Truque que costuma resolver:
-         * 1) converte do UTF-8 atual para Windows-1252 (gera bytes "originais")
-         * 2) converte esses bytes de Windows-1252 para UTF-8 (decodifica corretamente)
-         */
-        $tmp = @mb_convert_encoding($texto, 'Windows-1252', 'UTF-8');
-        if ($tmp === false || $tmp === '') {
-            return $texto;
-        }
-
-        $fix = @mb_convert_encoding($tmp, 'UTF-8', 'Windows-1252');
-        if ($fix === false || $fix === '') {
-            return $texto;
-        }
-
-        // Heurística: se piorou, não aplica
-        // (evita mexer em texto que já estava correto)
-        if (substr_count($fix, 'Ã') > substr_count($texto, 'Ã')) {
-            return $texto;
-        }
-
-        return $fix;
+        return $texto;
     }
 }
