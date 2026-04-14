@@ -196,7 +196,7 @@ class ProcessaCarga
             // - Se doc válido: busca por CPF/CNPJ
             // - Senão: busca por Nome (normalizado conforme DB)
             if ($isDocValido) {
-                $clienteId = $this->findUserIdByCpfCnpj($digits);
+                $clienteId = $this->findUserIdByCpfCnpj($digits, $clienteNormDb);
             } else {
                 $clienteId = $this->findUserIdByName($clienteNormDb);
             }
@@ -401,11 +401,11 @@ class ProcessaCarga
         return ($len === 11 || $len === 14);
     }
 
-    private function findUserIdByCpfCnpj($digits)
+    private function findUserIdByCpfCnpj($digits, $clienteNormDb = null)
     {
-        $sql  = "SELECT Id FROM cliente WHERE CPF = :doc LIMIT 1";
+        $sql  = "SELECT Id FROM cliente WHERE CPF = :doc and Nome = :nome LIMIT 1";
         $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([':doc' => $digits]);
+        $stmt->execute([':doc' => $digits, ':nome' => $clienteNormDb]);
         $id = $stmt->fetchColumn();
         return $id ? (int) $id : null;
     }

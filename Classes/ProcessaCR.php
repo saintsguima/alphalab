@@ -45,8 +45,12 @@ class ProcessaCR
         $errors   = [];
         $linhaNum = 0;
 
-        $csv = new SplFileObject($csvPath, 'r');
-        $csv->setFlags(SplFileObject::READ_CSV | SplFileObject::SKIP_EMPTY);
+        // $csv = new SplFileObject($csvPath, 'r');
+        // $csv->setFlags(SplFileObject::READ_CSV | SplFileObject::SKIP_EMPTY);
+        // $csv->setCsvControl(';');
+
+        $csv = new SplFileObject($csvPath);
+        $csv->setFlags(SplFileObject::READ_CSV);
         $csv->setCsvControl(';');
 
         $cabecalhoEsperado = [
@@ -111,7 +115,8 @@ class ProcessaCR
 
     private function processDataRow(array $row, $linhaNum, $origName, &$ok, &$fail, array &$errors)
     {
-        $clienteRaw = trim(isset($row[1]) ? (string) $row[1] : '');
+                                                                      //$clienteRaw = trim(isset($row[1]) ? (string) $row[1] : '');
+        $clienteRaw = trim((string) (isset($row[1]) ? $row[1] : '')); // Cliente
         $docRaw     = trim(isset($row[2]) ? (string) $row[2] : '');
         $totalRaw   = trim(isset($row[5]) ? (string) $row[5] : '');
 
@@ -151,18 +156,20 @@ class ProcessaCR
         $isDoc  = ($digits !== '' && $this->isCpfCnpjDigits($digits));
 
         if ($isDoc) {
-            $clienteId = $this->findUserIdByCpfCnpj($digits);
+            $clienteId = $this->findUserIdByCpfCnpj($digits, $clienteNorm);
         }
 
-        if ($clienteId === null) {
-            $clienteId = $this->findUserIdByName($clienteNorm);
-            // var_dump($clienteRaw);
-            // echo '<br/>';
-            // var_dump($clienteNorm);
-            // echo '<br/>';
-            // var_dump('Fallback por nome: ' . $clienteNorm . ' -> ' . ($clienteId === null ? 'NÃO ENCONTRADO' : 'ID ' . $clienteId));
-            // echo '<br/>';
-        }
+        // if ($clienteId === null) {
+        //     $clienteId = $this->findUserIdByName($clienteNorm);
+        //     var_dump($digits);
+        //     echo '<br/>';
+        //     var_dump($clienteNorm);
+        //     echo '<br/>';
+        //     var_dump($clienteRaw);
+        //     echo '<br/>';
+        //     var_dump('Fallback por nome: ' . $clienteNorm . ' -> ' . ($clienteId === null ? 'NÃO ENCONTRADO' : 'ID ' . $clienteId));
+        //     echo '<br/>';
+        // }
 
         if ($clienteId === null) {
             $fail++;
@@ -386,24 +393,24 @@ class ProcessaCR
         return ($len === 11 || $len === 14);
     }
 
-    private function findUserIdByCpfCnpj($digits)
+    private function findUserIdByCpfCnpj($digits, $clienteNorm = null)
     {
         $digits = (string) $digits;
 
         $candidatesSql = [
-            "SELECT Id FROM cliente WHERE CPF = :doc LIMIT 1",
-            "SELECT Id FROM cliente WHERE CNPJ = :doc LIMIT 1",
-            "SELECT Id FROM cliente WHERE CnpjCpf = :doc LIMIT 1",
-            "SELECT Id FROM cliente WHERE REPLACE(REPLACE(REPLACE(CnpjCpf,'.',''),'-',''),'/','') = :doc LIMIT 1",
-            "SELECT Id FROM cliente WHERE REPLACE(REPLACE(REPLACE(CNPJ,'.',''),'-',''),'/','') = :doc LIMIT 1",
-            "SELECT Id FROM cliente WHERE REPLACE(REPLACE(CPF,'.',''),'-','') = :doc LIMIT 1",
+            "SELECT Id FROM cliente WHERE CPF = :doc and Nome = :nome LIMIT 1",
+            "SELECT Id FROM cliente WHERE CNPJ = :doc and Nome = :nome LIMIT 1",
+            "SELECT Id FROM cliente WHERE CnpjCpf = :doc and Nome = :nome LIMIT 1",
+            "SELECT Id FROM cliente WHERE REPLACE(REPLACE(REPLACE(CnpjCpf,'.',''),'-',''),'/','') = :doc and Nome = :nome LIMIT 1",
+            "SELECT Id FROM cliente WHERE REPLACE(REPLACE(REPLACE(CNPJ,'.',''),'-',''),'/','') = :doc and Nome = :nome LIMIT 1",
+            "SELECT Id FROM cliente WHERE REPLACE(REPLACE(CPF,'.',''),'-','') = :doc and Nome = :nome LIMIT 1",
         ];
 
         foreach ($candidatesSql as $sql) {
             try {
                 $stmt = $this->pdo->prepare($sql);
                 // ✅ sem ":" nas chaves
-                $stmt->execute(['doc' => $digits]);
+                $stmt->execute([':doc' => $digits, ':nome' => $clienteNorm]);
                 $id = $stmt->fetchColumn();
                 if ($id !== false && $id !== null) {
                     return (int) $id;
