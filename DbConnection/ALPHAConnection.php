@@ -17,7 +17,7 @@ function db_pdo(): PDO
 
     // DEV
 
-    $host = 'localhost'; //'srv952.hstgr.io';
+    $host = 'srv952.hstgr.io';
     $db   = 'u902229595_des_alphalabs';
     $user = 'u902229595_user_alphalabs';
     $pass = 'al257425227!AG';

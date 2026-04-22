@@ -159,17 +159,17 @@ class ProcessaCR
             $clienteId = $this->findUserIdByCpfCnpj($digits, $clienteNorm);
         }
 
-        // if ($clienteId === null) {
-        //     $clienteId = $this->findUserIdByName($clienteNorm);
-        //     var_dump($digits);
-        //     echo '<br/>';
-        //     var_dump($clienteNorm);
-        //     echo '<br/>';
-        //     var_dump($clienteRaw);
-        //     echo '<br/>';
-        //     var_dump('Fallback por nome: ' . $clienteNorm . ' -> ' . ($clienteId === null ? 'NÃO ENCONTRADO' : 'ID ' . $clienteId));
-        //     echo '<br/>';
-        // }
+        if ($clienteId === null) {
+            $clienteId = $this->findUserIdByName($clienteNorm);
+            // var_dump($digits);
+            // echo '<br/>';
+            // var_dump($clienteNorm);
+            // echo '<br/>';
+            // var_dump($clienteRaw);
+            // echo '<br/>';
+            // var_dump('Fallback por nome: ' . $clienteNorm . ' -> ' . ($clienteId === null ? 'NÃO ENCONTRADO' : 'ID ' . $clienteId));
+            // echo '<br/>';
+        }
 
         if ($clienteId === null) {
             $fail++;

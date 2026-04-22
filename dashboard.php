@@ -79,6 +79,27 @@
                         </div>
                     </div>
                 </div>
+                <div class="row row-cols-1 row-cols-md-2 row-cols-xl-4">
+                    <div class="col">
+                        <div class="card radius-10">
+                            <div class="card-body">
+                                <div class="d-flex align-items-center justify-content-between">
+                                    <div>
+                                        <p class="mb-0">
+                                            Total de Faturamento do Mês de
+                                            <input type="month" class="form-control" id="txtMesFaturamento"
+                                                placeholder="Mês de Faturamento"
+                                                style="width: 250px; display: inline-block;">
+                                        </p>
+                                        <h5 class="mb-0" id="h5MesFaturamento">***********</h5>
+                                    </div>
+                                    <!-- <div id="chart1"></div> -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!--end row-->
                 <div class="row" style='display:none'>
                     <div class="col-12 col-lg-12 col-xl-12 col-xxl-12 d-flex">
@@ -335,7 +356,7 @@
         		const APP_HOST = "' . $GLOBALS['APP_HOST'] . '";
 				const API_URL = "' . $GLOBALS['API_URL'] . '";
     			</script>
-				<script src="assets/js/pages/dashboard.js?v=0"></script>
+				<script src="assets/js/pages/dashboard.js?v=1"></script>
 			';
 
             echo $script;

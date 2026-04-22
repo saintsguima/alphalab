@@ -1,6 +1,6 @@
 let table;
 
-// Estado do modal/linha selecionada
+// Estado da linha/modal selecionado
 let rowSelecionada = null;
 let dataSelecionada = null;
 
@@ -15,46 +15,68 @@ $(document).ready(function () {
         dom: 'Bfrtip',
         buttons: ['copy', 'excel', 'pdf', 'print'],
         data: [],
-        // Guardamos o Id no DataTable para facilitar atualizações
-        rowId: function (row) { return `cr_${row.Id}`; },
+        rowId: function (row) {
+            return `cr_${row.Id}`;
+        },
         columns: [
             { data: 'Nome' },
             {
                 data: 'DtInicio',
-                render: function (data) { return formatarData(data); }
+                render: function (data) {
+                    return formatarData(data);
+                }
             },
             {
                 data: 'DtFinal',
-                render: function (data) { return formatarData(data); }
+                render: function (data) {
+                    return formatarData(data);
+                }
             },
             {
                 data: 'VlTotal',
                 render: function (data, type, row) {
-                    // Exibe como link clicável (abre modal)
                     const texto = formatarDecimal(data);
-                    // "type" pode ser 'display' ou 'filter' etc. Mantemos string limpa para exportar.
                     if (type !== 'display') return texto;
                     return `<a href="#" class="lnk-ajustar-vltotal" data-id="${row.Id}">${texto}</a>`;
                 }
             },
             {
                 data: 'VlConciliado',
-                render: function (data) { return formatarDecimal(data); }
+                render: function (data, type, row) {
+                    const texto = formatarDecimal(data);
+                    if (type !== 'display') return texto;
+                    return `<a href="#" class="lnk-ajustar-vlconciliado" data-id="${row.Id}">${texto}</a>`;
+                }
+            },
+            {
+                data: 'ObservacaoAjuste',
+                defaultContent: '',
+                render: function (data, type, row) {
+                    const observacao = data || row.Observacao || row.ObsAjuste || '';
+                    return observacao;
+                }
             },
             {
                 data: 'DtCC',
-                render: function (data) { return formatarDataHora(data); }
+                render: function (data) {
+                    return formatarDataHora(data);
+                }
             }
-        ]
+        ],
+        language: {
+            url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/pt-BR.json'
+        }
     });
 
-    table.buttons().container().appendTo('#dtCR_wrapper .col-md-6:eq(0)');
+    if (table.buttons) {
+        table.buttons().container().appendTo('#dtCR_wrapper .col-md-6:eq(0)');
+    }
 
     $('#cmdPesquisarPorData').on('click', function () {
         carregarGridAjuste();
     });
 
-    // Clique no link do valor
+    // Clique no link do Valor C.R.
     $('#dtCR tbody').on('click', 'a.lnk-ajustar-vltotal', function (e) {
         e.preventDefault();
 
@@ -62,15 +84,17 @@ $(document).ready(function () {
         dataSelecionada = rowSelecionada.data();
 
         if (!dataSelecionada || !dataSelecionada.Id) {
-            Swal.fire({ icon: 'error', title: 'Erro', text: 'Não foi possível identificar o registro.' });
+            Swal.fire({
+                icon: 'error',
+                title: 'Erro',
+                text: 'Não foi possível identificar o registro.'
+            });
             return;
         }
 
-        // Preenche o input com valor atual
         const atual = Number(dataSelecionada.VlTotal ?? 0);
         $('#txtNovoVlTotal').val(formatarDecimal(atual));
 
-        // Foca e abre modal
         const modalEl = document.getElementById('modalAjusteVlTotal');
         const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
         modal.show();
@@ -78,22 +102,74 @@ $(document).ready(function () {
         setTimeout(() => $('#txtNovoVlTotal').trigger('focus'), 150);
     });
 
-    // Máscara BR: somente números, sempre em centavos, sem negativo
-    $('#txtNovoVlTotal').on('input', function () {
-        const masked = maskMoedaBR($(this).val());
-        $(this).val(masked);
+    // Clique no link do Valor Conciliado
+    $('#dtCR tbody').on('click', 'a.lnk-ajustar-vlconciliado', function (e) {
+        e.preventDefault();
+
+        rowSelecionada = table.row($(this).closest('tr'));
+        dataSelecionada = rowSelecionada.data();
+
+        if (!dataSelecionada || !dataSelecionada.Id) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Erro',
+                text: 'Não foi possível identificar o registro.'
+            });
+            return;
+        }
+
+        const atual = Number(dataSelecionada.VlConciliado ?? 0);
+        const observacaoAtual =
+            dataSelecionada.ObservacaoAjuste ||
+            dataSelecionada.Observacao ||
+            dataSelecionada.ObsAjuste ||
+            '';
+
+        $('#txtNovoVlConciliado').val(formatarDecimal(atual));
+        $('#hdnVlConciliadoAtual').val(atual);
+        $('#txtObsAjusteConciliado').val(observacaoAtual);
+        $('#txtSenhaAjusteConciliado').val('');
+
+        const modalEl = document.getElementById('modalAjusteVlConciliado');
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
+
+        setTimeout(() => $('#txtNovoVlConciliado').trigger('focus'), 150);
     });
 
-    // Salvar
+    // Máscara Valor C.R.
+    $('#txtNovoVlTotal').on('input', function () {
+        $(this).val(maskMoedaBR($(this).val()));
+    });
+
+    // Máscara Valor Conciliado
+    $('#txtNovoVlConciliado').on('input', function () {
+        $(this).val(maskMoedaBR($(this).val()));
+    });
+
+    // Salvar Valor C.R.
     $('#cmdSalvarVlTotal').on('click', async function () {
         await salvarVlTotal();
     });
 
-    // Enter no input salva
+    // Salvar Valor Conciliado
+    $('#cmdSalvarVlConciliado').on('click', async function () {
+        await salvarVlConciliado();
+    });
+
+    // Enter no modal Valor C.R.
     $('#txtNovoVlTotal').on('keydown', async function (e) {
         if (e.key === 'Enter') {
             e.preventDefault();
             await salvarVlTotal();
+        }
+    });
+
+    // Enter no modal Valor Conciliado
+    $('#txtNovoVlConciliado, #txtObsAjusteConciliado, #txtSenhaAjusteConciliado').on('keydown', async function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            await salvarVlConciliado();
         }
     });
 
@@ -103,7 +179,11 @@ $(document).ready(function () {
 
 async function salvarVlTotal() {
     if (!rowSelecionada || !dataSelecionada) {
-        Swal.fire({ icon: 'error', title: 'Erro', text: 'Nenhuma linha selecionada.' });
+        Swal.fire({
+            icon: 'error',
+            title: 'Erro',
+            text: 'Nenhuma linha selecionada.'
+        });
         return;
     }
 
@@ -112,19 +192,24 @@ async function salvarVlTotal() {
     const valorNumerico = brToNumber(valorTexto);
 
     if (Number.isNaN(valorNumerico)) {
-        Swal.fire({ icon: 'warning', title: 'Atenção', text: 'Informe um valor válido.' });
+        Swal.fire({
+            icon: 'warning',
+            title: 'Atenção',
+            text: 'Informe um valor válido.'
+        });
         return;
     }
 
     if (valorNumerico < 0) {
-        Swal.fire({ icon: 'warning', title: 'Atenção', text: 'O valor não pode ser negativo.' });
+        Swal.fire({
+            icon: 'warning',
+            title: 'Atenção',
+            text: 'O valor não pode ser negativo.'
+        });
         return;
     }
 
-    // Se quiser bloquear valor vazio (0,00), descomente:
-    // if (valorNumerico === 0) { ... }
-
-    const endPoint = API_URL + "contasreceber/atualizar-vltotal"; // <- ajuste aqui se sua API usar outro caminho
+    const endPoint = API_URL + "contasreceber/atualizar-vltotal";
 
     try {
         $('#cmdSalvarVlTotal').prop('disabled', true);
@@ -132,44 +217,152 @@ async function salvarVlTotal() {
         const response = await fetch(endPoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ Id: id, VlTotal: valorNumerico })
+            body: JSON.stringify({
+                Id: id,
+                VlTotal: valorNumerico
+            })
         });
 
-        // tenta interpretar como JSON; se falhar, joga erro
         let result = null;
-        try { result = await response.json(); } catch { /* ignore */ }
+        try {
+            result = await response.json();
+        } catch {
+        }
 
         if (!response.ok) {
-            const msg = (result && (result.mensagem || result.message)) ? (result.mensagem || result.message) : `HTTP ${response.status}`;
+            const msg = (result && (result.mensagem || result.message))
+                ? (result.mensagem || result.message)
+                : `HTTP ${response.status}`;
             throw new Error(msg);
         }
 
-        // Considera ok se:
-        // - result.status === 'ok'
-        // - ou result.success === true
-        // - ou não veio payload (algumas APIs respondem 204)
         const ok = !result || result.status === 'ok' || result.success === true;
         if (!ok) {
-            const msg = (result && (result.mensagem || result.message)) ? (result.mensagem || result.message) : 'A API retornou erro.';
+            const msg = (result && (result.mensagem || result.message))
+                ? (result.mensagem || result.message)
+                : 'A API retornou erro.';
             throw new Error(msg);
         }
 
-        // ✅ Atualiza imediatamente a linha na tela
-        const novo = { ...dataSelecionada, VlTotal: valorNumerico };
+        const novo = {
+            ...dataSelecionada,
+            VlTotal: valorNumerico
+        };
+
         rowSelecionada.data(novo).invalidate().draw(false);
 
-        // Fecha modal
         const modalEl = document.getElementById('modalAjusteVlTotal');
         const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
         modal.hide();
 
-        Swal.fire({ icon: 'success', title: 'Sucesso', text: 'Valor atualizado.' });
+        Swal.fire({
+            icon: 'success',
+            title: 'Sucesso',
+            text: 'Valor atualizado.'
+        });
 
     } catch (err) {
         console.error(err);
-        Swal.fire({ icon: 'error', title: 'Erro', text: err.message || 'Falha ao atualizar valor.' });
+        Swal.fire({
+            icon: 'error',
+            title: 'Erro',
+            text: err.message || 'Falha ao atualizar valor.'
+        });
     } finally {
         $('#cmdSalvarVlTotal').prop('disabled', false);
+    }
+}
+
+async function salvarVlConciliado() {
+    if (!rowSelecionada || !dataSelecionada) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Erro',
+            text: 'Nenhuma linha selecionada.'
+        });
+        return;
+    }
+
+    const id = dataSelecionada.Id;
+    const userId = USERID;
+    const valorTexto = String($('#txtNovoVlConciliado').val() || '').trim();
+    const valorAnterior = String($('#hdnVlConciliadoAtual').val() || '').trim();
+    const descricao = String($('#txtObsAjusteConciliado').val() || '').trim();
+    const senha = String($('#txtSenhaAjusteConciliado').val() || '').trim();
+    const valorNumerico = brToNumber(valorTexto);
+
+    if (Number.isNaN(valorNumerico)) {
+        Swal.fire({
+            icon: 'warning',
+            title: 'Atenção',
+            text: 'Informe um valor conciliado válido.'
+        });
+        return;
+    }
+
+    const endPoint = API_URL + "contasreceber/atualizar-vlconciliado";
+
+    try {
+        $('#cmdSalvarVlConciliado').prop('disabled', true);
+
+        const payload = {
+            Id: id,
+            UserId: userId,
+            VlConciliado: valorNumerico,
+            VlAnterior: brToNumber(valorAnterior),
+            ObservacaoAjuste: descricao,
+            Senha: senha
+        };
+
+        console.log('Endpoint:', endPoint);
+        console.log('Payload:', payload);
+
+        const response = await fetch(endPoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        let result = null;
+        try {
+            result = await response.json();
+        } catch { }
+
+        if (!response.ok) {
+            throw new Error((result && (result.mensagem || result.message)) || `HTTP ${response.status}`);
+        }
+
+        if (result && result.status !== 'ok' && result.success !== true) {
+            throw new Error(result.mensagem || result.message || 'A API retornou erro.');
+        }
+
+        const novo = {
+            ...dataSelecionada,
+            VlConciliado: valorNumerico,
+            ObservacaoAjuste: descricao
+        };
+
+        rowSelecionada.data(novo).invalidate().draw(false);
+
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalAjusteVlConciliado')).hide();
+
+        Swal.fire({
+            icon: 'success',
+            title: 'Sucesso',
+            text: 'Valor conciliado atualizado.'
+        });
+
+    } catch (err) {
+        console.error('Erro no fetch:', err);
+        Swal.fire({
+            icon: 'error',
+            title: 'Erro',
+            text: err.message || 'Falha ao atualizar valor conciliado.'
+        });
+    } finally {
+        $('#cmdSalvarVlConciliado').prop('disabled', false);
     }
 }
 
@@ -190,13 +383,13 @@ function carregarCliente() {
 
                 $select.select2({
                     theme: "bootstrap-5",
-                    width: $select.data('width') ? $select.data('width') : $select.hasClass('w-100') ? '100%' : 'style',
+                    width: $select.data('width')
+                        ? $select.data('width')
+                        : $select.hasClass('w-100')
+                            ? '100%'
+                            : 'style',
                     placeholder: $select.data('placeholder')
                 }).val("0").trigger('change');
-
-                // setTimeout(function () {
-                //     carregarGridAjuste();
-                // }, 300);
 
             } else {
                 console.error('Erro: ' + data.mensagem);
@@ -213,7 +406,9 @@ function carregarGridAjuste() {
     let DtInicio = getLastDateOfMonth($('#txtDtInicial').val());
     let DtFinal = getLastDateOfMonth($('#txtDtFinal').val());
 
-    const idParaEnviar = (ClientId === '' || ClientId === '0' || ClientId === null) ? null : ClientId;
+    const idParaEnviar = (ClientId === '' || ClientId === '0' || ClientId === null)
+        ? null
+        : ClientId;
 
     const payload = {
         Id: idParaEnviar,
@@ -236,7 +431,6 @@ function carregarGridAjuste() {
         })
         .then(response => {
             if (response.status === 'ok') {
-                // Esperado: response.crs = [{Id, Nome, DtInicio, DtFinal, VlTotal, VlConciliado, DtCC, ...}]
                 table.clear().rows.add(response.crs || []).draw();
             } else {
                 table.clear().draw();
@@ -259,7 +453,7 @@ function carregarGridAjuste() {
         });
 }
 
-// ------------------ Helpers (mesmos do list-cr) ------------------
+// ------------------ Helpers ------------------
 
 function formatarData(dataString) {
     if (!dataString) return '';
@@ -327,15 +521,11 @@ function getLastDateOfMonth(e) {
 // ------------------ Máscara BR e conversão ------------------
 
 function maskMoedaBR(valor) {
-    // Mantém somente dígitos
     let digits = String(valor || '').replace(/\D/g, '');
-
-    // Remove qualquer tentativa de negativo
     digits = digits.replace(/-/g, '');
 
     if (digits.length === 0) return '0,00';
 
-    // Trata como centavos
     const number = parseInt(digits, 10) / 100;
 
     if (isNaN(number) || number < 0) return '0,00';
@@ -347,7 +537,6 @@ function maskMoedaBR(valor) {
 }
 
 function brToNumber(valorBR) {
-    // Ex.: "1.234,56" => 1234.56
     if (valorBR === null || valorBR === undefined) return NaN;
 
     const s = String(valorBR)
@@ -355,9 +544,7 @@ function brToNumber(valorBR) {
         .replace(/\./g, '')
         .replace(',', '.');
 
-    // Evita negativo
     if (s.includes('-')) return NaN;
 
-    const n = parseFloat(s);
-    return n;
+    return parseFloat(s);
 }

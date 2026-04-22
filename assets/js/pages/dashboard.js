@@ -1,4 +1,7 @@
+
 $(document).ready(function () {
+    fillDate();
+
     (async () => {
         const Totais = await buscarTotalExtratos();
 
@@ -16,6 +19,7 @@ $(document).ready(function () {
             document.getElementById('h5Inadimplencia').textContent = formatarMoeda(Totais.TotalAbertos);
             document.getElementById('h5FaturadoNoMes').textContent = formatarMoeda(Totais.FaturadoNoMes);
             document.getElementById('h5AReceber').textContent = formatarMoeda(Totais.TotalAReceber);
+            document.getElementById('h5MesFaturamento').textContent = formatarMoeda(Totais.FaturadoNoMes);
         }        //}
     })();
 });
@@ -58,4 +62,98 @@ async function buscarTotalExtratos() {
         // Retorna um valor padrão ou lança o erro novamente, dependendo da sua necessidade
         return null;
     }
+}
+
+
+function fillDate() {
+    // Pega a data atual
+    const dataAtual = new Date();
+
+    // Extrai o ano (YYYY)
+    const ano = dataAtual.getFullYear();
+
+    // Extrai o mês (adiciona 1 porque os meses começam em 0 no JavaScript)
+    // O padStart(2, '0') garante que meses menores que 10 fiquem com 2 dígitos (ex: '04')
+    const mes = String(dataAtual.getMonth() + 1).padStart(2, '0');
+
+    // Formata no padrão exigido pelo input type="month" (YYYY-MM)
+    const valorFormatado = `${ano}-${mes}`;
+
+    // Atribui o valor ao campo
+    document.getElementById('txtMesFaturamento').value = valorFormatado;
+
+
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+
+    const campoMes = document.getElementById('txtMesFaturamento');
+
+    // Associa o evento 'change' à função externa
+    campoMes.addEventListener('change', buscarDadosFaturamento);
+
+});
+function buscarDadosFaturamento(evento) {
+
+    const valorSelecionado = evento.target.value;
+    let AnoMes = document.getElementById('txtMesFaturamento').value;
+
+    // Se o usuário limpar o campo, não faz nada
+    if (!valorSelecionado) {
+        console.log("Campo vazio, nenhuma chamada foi feita.");
+        return;
+    }
+
+    // Separa o ano e o mês
+    const [anoSelecionado, mesSelecionado] = valorSelecionado.split('-');
+
+    // Monta a URL
+
+    const payload = {
+        Ano: anoSelecionado,
+        Mes: mesSelecionado
+    };
+
+    let endPoint = `${API_URL}dashboard/pagamentos-no-mes-de`;
+
+    fetch(endPoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('HTTP status ' + response.status);
+            }
+            return response.json();
+        })
+        .then(response => {
+            if (response.status === 'ok') {
+                const formatarMoeda = (valor) => {
+                    return new Intl.NumberFormat('pt-BR', {
+                        style: 'currency',
+                        currency: 'BRL'
+                    }).format(valor || 0);
+                };
+                const Total = response.dados;
+                document.getElementById('h5MesFaturamento').textContent = formatarMoeda(Total.TotalAReceberNoMes);
+            } else {
+                table.clear().draw();
+                Swal.fire({
+                    icon: "error",
+                    title: "Oops...",
+                    draggable: true,
+                    html: response.mensagem
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+            Swal.fire({
+                icon: "error",
+                title: "Erro",
+                draggable: true,
+                text: "Erro ao conectar com a API ou requisição falhou: " + error.message
+            });
+        });
 }
